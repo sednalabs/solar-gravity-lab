@@ -20,6 +20,10 @@ The [61-row coverage table](device-research-coverage.md) provides a readable
 mapping from the original opportunity numbers to each implemented scope.
 The [first S25 result and resulting changes](device-research-s25-first-run.md)
 record the physical evidence that motivated protocol version 2 and cache persistence.
+The [first benchmark.2 recording](device-research-s25-benchmark2.md) exposed
+first-position bias in fixed ABBA blocks and motivates protocol version 3.
+The installed APK's manifest records its actual protocol; a newer analyser
+does not turn an older recording into a counterbalanced run.
 
 ## First recording on a Galaxy S25 Ultra
 
@@ -31,18 +35,22 @@ the earlier app installed until its sessions are exported; no uninstall is neede
 to install a new version-scoped research release.
 
 Start with **Quick comparison** using system placement, the default display
-mode and ADPF hints off. Protocol version 2 seeks at least 30 seconds of active
-observation and five complete ABBA blocks per eligible pair, within a three-minute
-ceiling. `SKIP` is useful evidence: it states which feature, datatype, driver or
+mode and ADPF hints off. Protocol version 3 seeks at least 30 seconds of active
+observation and five complete counterbalanced units per eligible pair, within a
+three-minute ceiling. Each unit contains one ABBA and one BAAB block, with A
+always the baseline and B always the candidate. Both blocks must complete in
+one thermal epoch. `SKIP` is useful evidence: it states which feature, datatype, driver or
 public API was unavailable. A `FAIL` preserves the attempted result and error;
 it is never interpreted as a fast candidate.
 
 After the phone has cooled, run **Full investigation**. It seeks at least two
-minutes of active observation and five complete blocks per eligible pair, with
+minutes of active observation and five complete counterbalanced units per eligible pair, with
 a ten-minute ceiling. One block per active pair per round spreads work across
 candidates, fixtures, step counts and placements; the first slot rotates between
 rounds. The declared schedule and completed records identify exactly what ran.
-Budget expiry is a partial result, not evidence for the unvisited cases. Use a
+Normal completion closes the complementary round; budget expiry retains any
+unmatched blocks without counting them as complete units. It is a partial
+result, not evidence for the unvisited cases. Use a
 targeted experiment run to investigate a particular case and its control.
 
 For sustained behaviour, use **15 minute stability run**. It repeats representative
@@ -217,9 +225,13 @@ python3 tools/analyse_benchmark_report.py /path/to/research-session.zip --output
 ```
 
 This writes JSON with all exclusions, timing summaries, error metrics,
-observational summaries and a Markdown readout. Five or more clean ABBA blocks
-are required for a preliminary candidate decision. The seeded block bootstrap
-is a reproducible descriptive interval; it does not eliminate systematic drift.
+observational summaries and a Markdown readout. Five or more clean, complete
+counterbalanced units are required for a preliminary protocol-v3 candidate
+decision. The analyser reconstructs units from raw samples, combines the two
+complementary block ratios in log space and resamples complete units. It retains
+raw block effects and excludes failed, unmatched or incompatible units. Legacy
+fixed-ABBA recordings remain descriptive and receive explicit order diagnostics.
+The seeded bootstrap is reproducible; it does not eliminate systematic drift.
 A practical candidate currently requires at least a 5% median time reduction
 and an upper 95% bootstrap limit below -1%. These are research triage thresholds,
 not automatic production acceptance criteria.

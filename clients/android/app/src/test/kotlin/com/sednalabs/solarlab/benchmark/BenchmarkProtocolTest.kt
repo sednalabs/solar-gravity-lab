@@ -2,6 +2,12 @@ package com.sednalabs.solarlab.benchmark
 
 import org.junit.Assert.*
 import org.junit.Test
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 
 class BenchmarkProtocolTest {
     private fun case(id: String, status: String = "runnable", baseline: String? = null, fixtures: List<String> = listOf("sparse3")) =
@@ -28,18 +34,82 @@ class BenchmarkProtocolTest {
         assertNull(BenchmarkProtocol.commonEffectiveRepeats(11, 12, 11))
     }
 
-    @Test fun durationAndCompleteBlockTargetsAreIndependentAndFinite() {
+    @Test fun durationAndCompleteUnitTargetsAreIndependentAndAnOpenUnitMustFinish() {
         val second = 1_000_000_000L
         assertTrue(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 29 * second, listOf(5, 5)))
         assertTrue(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 31 * second, listOf(5, 4)))
         assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 30 * second, listOf(5, 5)))
+        assertTrue(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 30 * second, listOf(5, 5), hasUnmatchedUnits = true))
         assertTrue(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.FULL, 119 * second, listOf(5)))
         assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.FULL, 120 * second, listOf(5)))
         assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.SUSTAINED, 900 * second, listOf(5)))
         assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 0, emptyList()))
+        assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 0, emptyList(), hasUnmatchedUnits = true))
+        assertEquals(5, BenchmarkPlan.QUICK.minimumCompleteCounterbalancedUnits)
+        assertEquals(10, BenchmarkPlan.QUICK.minimumCompleteBlocks)
         assertTrue(BenchmarkPlan.QUICK.maximumMeasuredBlocks < BenchmarkPlan.SUSTAINED.maximumMeasuredBlocks)
         assertEquals(180L, BenchmarkPlan.QUICK.budgetSeconds)
         assertEquals(600L, BenchmarkPlan.FULL.budgetSeconds)
+    }
+
+    @Test fun aDeadlineCannotCompleteSustainedWorkWithCooldownShortfallOrUnmatchedHalf() {
+        val second = 1_000_000_000L
+        val plan = BenchmarkPlan.SUSTAINED
+        assertFalse(BenchmarkProtocol.completionTargetsMet(plan, 899 * second, listOf(5, 5), false))
+        assertFalse(BenchmarkProtocol.completionTargetsMet(plan, 900 * second, listOf(5, 4), false))
+        assertFalse(BenchmarkProtocol.completionTargetsMet(plan, 900 * second, listOf(5, 5), true))
+        assertFalse(BenchmarkProtocol.completionTargetsMet(plan, 900 * second, emptyList(), false))
+        assertTrue(BenchmarkProtocol.completionTargetsMet(plan, 900 * second, listOf(5, 5), false))
+    }
+
+    @Test fun cancellationDuringCooldownClosesItOnceAndPreservesTheUnmatchedHalf() = runBlocking {
+        val accounting = BenchmarkThermalAccounting()
+        val policy = ThermalPausePolicy()
+        val ledger = BenchmarkRoundLedger(listOf("pair"))
+        ledger.recordBlock("pair", 0, true, 0)
+        var now = 10L
+        var closures = 0
+        var resumed: Boolean? = null
+        val waiting = CompletableDeferred<Unit>()
+        assertTrue(policy.update(3, now))
+        val worker = launch {
+            accounting.observePause({ now }, onEnd = { duration ->
+                // A cancellation-sensitive suspension must still execute in
+                // the closure, as the real journal callback suspends for I/O.
+                yield()
+                closures++
+                resumed = !policy.paused
+                assertEquals(40L, duration)
+            }) {
+                waiting.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        waiting.await()
+        now = 50L
+        worker.cancelAndJoin()
+        assertEquals(1, closures)
+        assertEquals(false, resumed)
+        assertEquals(40L, accounting.pausedNs)
+        assertEquals(1, accounting.epoch)
+        assertEquals(10L, now - accounting.pausedNs)
+        assertEquals(mapOf("pair" to 0), ledger.unmatchedUnitsSnapshot())
+        assertEquals(listOf(0), ledger.activeCompleteUnits())
+    }
+
+    @Test fun cooldownAccountingSurvivesAFailedEndRecord() = runBlocking {
+        val accounting = BenchmarkThermalAccounting()
+        var now = 10L
+        try {
+            accounting.observePause({ now }, onEnd = { throw IllegalStateException("journal unavailable") }) {
+                now = 40L
+            }
+            fail("The journal failure must remain visible")
+        } catch (expected: IllegalStateException) {
+            assertEquals("journal unavailable", expected.message)
+        }
+        assertEquals(30L, accounting.pausedNs)
+        assertEquals(1, accounting.epoch)
     }
 
     @Test fun roundsVisitEveryPairBeforeRepeatingAndRotateTheFirstSlot() {
@@ -50,6 +120,87 @@ class BenchmarkProtocolTest {
         assertEquals(emptyList<Int>(), BenchmarkProtocol.roundOrder(0, 0))
     }
 
+    @Test fun complementaryRoundsKeepRolesStableAndBalanceEveryChronologicalPosition() {
+        repeat(20) { unit ->
+            val first = BenchmarkSchedule.blockOrder(unit * 2)
+            val second = BenchmarkSchedule.blockOrder(unit * 2 + 1)
+            assertEquals(listOf("A1", "B1", "B2", "A2"), first)
+            assertEquals(listOf("B1", "A1", "A2", "B2"), second)
+            for (position in 0..3) assertEquals(setOf('A', 'B'), setOf(first[position][0], second[position][0]))
+            assertEquals("ABBA", BenchmarkSchedule.blockOrderName(unit * 2))
+            assertEquals("BAAB", BenchmarkSchedule.blockOrderName(unit * 2 + 1))
+        }
+        assertEquals(BenchmarkSchedule.baab, BenchmarkSchedule.blockOrder(Int.MAX_VALUE))
+    }
+
+    @Test fun aUnitRequiresBothComplementaryBlocksAndCannotReuseAnEarlierOrFailedHalf() {
+        val pair = "cpu:reference/sparse3/8/system"
+        val ledger = BenchmarkRoundLedger(listOf(pair))
+        assertNull(ledger.recordBlock(pair, 0, true, 0))
+        assertEquals(mapOf(pair to 0), ledger.unmatchedUnitsSnapshot())
+        assertEquals(listOf(0), ledger.activeCompleteUnits())
+        assertTrue(ledger.hasUnmatchedActiveUnits())
+        val missing = ledger.recordBlock(pair, 3, true, 0)!!
+        assertFalse(missing.complete)
+        assertEquals("missing_complementary_first_block", missing.reason)
+        assertFalse(ledger.hasUnmatchedActiveUnits())
+        ledger.recordBlock(pair, 4, false, 0)
+        assertEquals("incomplete_first_block", ledger.recordBlock(pair, 5, true, 0)!!.reason)
+        ledger.recordBlock(pair, 6, true, 0)
+        assertEquals("incomplete_second_block", ledger.recordBlock(pair, 7, false, 0)!!.reason)
+        assertEquals(listOf(0), ledger.activeCompleteUnits())
+        assertEquals(4, ledger.completedSnapshot()[pair])
+        assertEquals(6, ledger.attemptedBlocks)
+        assertNull(ledger.recordBlock(pair, 8, true, 0))
+        val completed = ledger.recordBlock(pair, 9, true, 0)!!
+        assertTrue(completed.complete)
+        assertEquals(4, completed.unit)
+        assertEquals(0, completed.thermalEpoch)
+        assertEquals(listOf(1), ledger.activeCompleteUnits())
+        assertTrue(ledger.unmatchedUnitsSnapshot().isEmpty())
+    }
+
+    @Test fun thermalRecoveryBetweenIndividuallyCompleteBlocksExcludesTheWholeUnit() {
+        val pair = "hardware:candidate/native-fixed/1/system"
+        val ledger = BenchmarkRoundLedger(listOf(pair))
+        ledger.recordBlock(pair, 0, true, 0)
+        val acrossPause = ledger.recordBlock(pair, 1, true, 1)!!
+        assertFalse(acrossPause.complete)
+        assertEquals("thermal_epoch_changed_between_blocks", acrossPause.reason)
+        assertNull(acrossPause.thermalEpoch)
+        assertEquals(listOf(2), ledger.activeCompleteBlocks())
+        assertEquals(listOf(0), ledger.activeCompleteUnits())
+        ledger.recordBlock(pair, 2, true, 1)
+        assertTrue(ledger.recordBlock(pair, 3, true, 1)!!.complete)
+        assertEquals(listOf(1), ledger.activeCompleteUnits())
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun duplicateRoundCannotCreateExtraBlocksOrUnits() {
+        val ledger = BenchmarkRoundLedger(listOf("pair"))
+        ledger.recordBlock("pair", 0, true, 0)
+        ledger.recordBlock("pair", 0, true, 0)
+    }
+
+    @Test fun interruptionBeforeTheBlockFinishesKeepsItsUnitUnmatchedWithoutCountingIt() {
+        val ledger = BenchmarkRoundLedger(listOf("pair"))
+        ledger.beginBlock("pair", 0)
+        assertEquals(1, ledger.attemptedBlocks)
+        assertEquals(mapOf("pair" to 0), ledger.unmatchedUnitsSnapshot())
+        assertEquals(listOf(0), ledger.activeCompleteUnits())
+        assertTrue(ledger.hasUnmatchedActiveUnits())
+        ledger.recordBlock("pair", 0, true, 0)
+        assertEquals(1, ledger.attemptedBlocks)
+        ledger.beginBlock("pair", 1)
+        assertEquals(2, ledger.attemptedBlocks)
+        assertEquals(mapOf("pair" to 0), ledger.unmatchedUnitsSnapshot())
+        assertEquals(listOf(0), ledger.activeCompleteUnits())
+        assertTrue(ledger.hasUnmatchedActiveUnits())
+        assertTrue(ledger.recordBlock("pair", 1, true, 0)!!.complete)
+        assertEquals(2, ledger.attemptedBlocks)
+        assertFalse(ledger.hasUnmatchedActiveUnits())
+    }
+
     @Test fun failedWarmupRetiresOnlyItsPairAndCannotPoisonSharedReferenceControls() {
         val failed = "cpu:candidate-a/sparse3/8/system"
         val sibling = "cpu:candidate-b/sparse3/8/system"
@@ -57,15 +208,18 @@ class BenchmarkProtocolTest {
         val ledger = BenchmarkRoundLedger(listOf(failed, sibling, control))
         ledger.visit(failed)
         ledger.retire(failed, "warmup_failed")
-        repeat(5) { ledger.recordBlock(sibling, true); ledger.recordBlock(control, true) }
-        ledger.recordBlock(sibling, false)
+        repeat(10) { round -> ledger.recordBlock(sibling, round, true, 0); ledger.recordBlock(control, round, true, 0) }
+        ledger.recordBlock(sibling, 10, false, 0)
         assertEquals(2, ledger.activePairCount)
-        assertEquals(listOf(5, 5), ledger.activeCompleteBlocks())
-        assertEquals(11, ledger.attemptedBlocks)
+        assertEquals(listOf(10, 10), ledger.activeCompleteBlocks())
+        assertEquals(listOf(5, 5), ledger.activeCompleteUnits())
+        assertEquals(21, ledger.attemptedBlocks)
         assertEquals(0, ledger.completedSnapshot()[failed])
         assertEquals(mapOf(failed to "warmup_failed"), ledger.retiredSnapshot())
         assertFalse(ledger.isRetired(control))
-        assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 30_000_000_000L, ledger.activeCompleteBlocks()))
+        assertTrue(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 30_000_000_000L, ledger.activeCompleteUnits(), ledger.hasUnmatchedActiveUnits()))
+        ledger.recordBlock(sibling, 11, true, 0)
+        assertFalse(BenchmarkProtocol.needsAnotherRound(BenchmarkPlan.QUICK, 30_000_000_000L, ledger.activeCompleteUnits(), ledger.hasUnmatchedActiveUnits()))
     }
 
     @Test fun quickPlanUsesRefinedReciprocalSqrtOnlyWhenRunnable() {

@@ -1,22 +1,27 @@
 package com.sednalabs.solarlab.benchmark
 
 import kotlin.math.ceil
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /** Scheduling and statistics are pure Kotlin so the experiment protocol is independently testable. */
 enum class BenchmarkPlan(
     val title: String,
     val budgetSeconds: Long,
     val minimumObservationSeconds: Long,
-    val minimumCompleteBlocks: Int,
+    val minimumCompleteCounterbalancedUnits: Int,
     val maximumMeasuredBlocks: Int,
 ) {
     QUICK("Quick comparison", 180, 30, 5, 4096),
     FULL("Full investigation", 600, 120, 5, 8192),
-    SUSTAINED("15 minute stability run", 900, 900, 5, 65536),
+    SUSTAINED("15 minute stability run", 900, 900, 5, 65536);
+
+    val minimumCompleteBlocks: Int get() = minimumCompleteCounterbalancedUnits * 2
 }
 
 /** Bounds native batching without changing fixture, timestep or scientific horizon. */
 object BenchmarkProtocol {
+    const val VERSION = 3
     const val TARGET_NATIVE_BATCH_NS = 5_000_000L
     const val MAXIMUM_CPU_REPEATS = 11
     // The pipeline-cache workload has a stricter cap than the native API's 32.
@@ -45,14 +50,48 @@ object BenchmarkProtocol {
         return List(taskCount) { ((start.toLong() + it) % taskCount).toInt() }
     }
 
-    fun needsAnotherRound(plan: BenchmarkPlan, activeObservationNs: Long, completeBlocks: Collection<Int>): Boolean =
-        completeBlocks.isNotEmpty() && (activeObservationNs < plan.minimumObservationSeconds * 1_000_000_000L ||
-            completeBlocks.any { it < plan.minimumCompleteBlocks })
+    fun needsAnotherRound(
+        plan: BenchmarkPlan, activeObservationNs: Long, completeUnits: Collection<Int>, hasUnmatchedUnits: Boolean = false,
+    ): Boolean = completeUnits.isNotEmpty() && !completionTargetsMet(plan, activeObservationNs, completeUnits, hasUnmatchedUnits)
+
+    fun completionTargetsMet(
+        plan: BenchmarkPlan, activeObservationNs: Long, completeUnits: Collection<Int>, hasUnmatchedUnits: Boolean,
+    ): Boolean = completeUnits.isNotEmpty() && activeObservationNs >= plan.minimumObservationSeconds * 1_000_000_000L &&
+        completeUnits.all { it >= plan.minimumCompleteCounterbalancedUnits } && !hasUnmatchedUnits
 }
+
+/** Closing an interrupted cooldown must still exclude its wall time from active observation. */
+class BenchmarkThermalAccounting {
+    var pausedNs: Long = 0
+        private set
+    var epoch: Int = 0
+        private set
+
+    suspend fun observePause(nowNs: () -> Long, onEnd: suspend (Long) -> Unit, waitForRecovery: suspend () -> Unit) {
+        val started = nowNs()
+        try {
+            waitForRecovery()
+        } finally {
+            val duration = (nowNs() - started).coerceAtLeast(0)
+            pausedNs += duration
+            epoch++
+            // Update accounting before journal I/O: even a failed closure write
+            // must not turn cooldown time into active observation.
+            withContext(NonCancellable) { onEnd(duration) }
+        }
+    }
+}
+
+data class BenchmarkCounterbalancedUnit(val unit: Int, val complete: Boolean, val reason: String, val thermalEpoch: Int?)
 
 /** A failure retires its fixture/steps/placement pair, never a shared baseline in other pairs. */
 class BenchmarkRoundLedger(pairKeys: Collection<String>) {
     private val completed = pairKeys.associateWith { 0 }.toMutableMap()
+    private val completedUnits = pairKeys.associateWith { 0 }.toMutableMap()
+    private data class FirstBlock(val round: Int, val complete: Boolean, val thermalEpoch: Int?)
+    private val firstBlocks = mutableMapOf<String, FirstBlock>()
+    private val activeBlocks = mutableMapOf<String, Int>()
+    private val lastRounds = mutableMapOf<String, Int>()
     private val retired = linkedMapOf<String, String>()
     private val visited = mutableSetOf<String>()
     var attemptedBlocks: Int = 0
@@ -63,13 +102,44 @@ class BenchmarkRoundLedger(pairKeys: Collection<String>) {
     fun visit(pair: String) { require(pair in completed); visited += pair }
     fun isRetired(pair: String): Boolean = pair in retired
     fun retire(pair: String, reason: String) { require(pair in completed); retired.putIfAbsent(pair, reason) }
-    fun recordBlock(pair: String, complete: Boolean) {
-        require(pair in completed)
+    fun beginBlock(pair: String, round: Int) {
+        require(pair in completed && pair !in activeBlocks)
+        require(round >= 0 && (lastRounds[pair]?.let { round > it } ?: true))
+        activeBlocks[pair] = round
         attemptedBlocks++
+    }
+    fun recordBlock(pair: String, round: Int, complete: Boolean, thermalEpoch: Int?): BenchmarkCounterbalancedUnit? {
+        require(pair in completed)
+        require(round >= 0 && (lastRounds[pair]?.let { round > it } ?: true))
+        require(!complete || (thermalEpoch != null && thermalEpoch >= 0))
+        if (pair !in activeBlocks) beginBlock(pair, round)
+        require(activeBlocks[pair] == round)
+        activeBlocks.remove(pair)
+        lastRounds[pair] = round
         if (complete) completed[pair] = completed.getValue(pair) + 1
+        if (round % 2 == 0) {
+            firstBlocks[pair] = FirstBlock(round, complete, thermalEpoch)
+            return null
+        }
+        val first = firstBlocks.remove(pair)
+        val reason = when {
+            first == null || first.round != round - 1 -> "missing_complementary_first_block"
+            !first.complete -> "incomplete_first_block"
+            !complete -> "incomplete_second_block"
+            first.thermalEpoch != thermalEpoch -> "thermal_epoch_changed_between_blocks"
+            else -> "eight_positive_PASS_samples_at_fixed_batch_and_one_thermal_epoch; offline_qualification_required"
+        }
+        val unitComplete = first != null && first.round == round - 1 && first.complete && complete && first.thermalEpoch == thermalEpoch
+        if (unitComplete) completedUnits[pair] = completedUnits.getValue(pair) + 1
+        return BenchmarkCounterbalancedUnit(round / 2, unitComplete, reason, if (unitComplete) thermalEpoch else null)
     }
     fun activeCompleteBlocks(): List<Int> = completed.filterKeys { it !in retired }.values.toList()
+    fun activeCompleteUnits(): List<Int> = completedUnits.filterKeys { it !in retired }.values.toList()
+    fun hasUnmatchedActiveUnits(): Boolean = (firstBlocks.keys + activeBlocks.keys).any { it !in retired }
     fun completedSnapshot(): Map<String, Int> = completed.toMap()
+    fun completedUnitsSnapshot(): Map<String, Int> = completedUnits.toMap()
+    fun unmatchedUnitsSnapshot(): Map<String, Int> =
+        firstBlocks.mapValues { it.value.round / 2 } + activeBlocks.mapValues { it.value / 2 }
     fun retiredSnapshot(): Map<String, String> = retired.toMap()
 }
 
@@ -106,6 +176,15 @@ data class BenchmarkPair(
 object BenchmarkSchedule {
     val fullSteps: List<Int> = listOf(1, 2, 4, 8, 16, 32, 64)
     val abba: List<String> = listOf("A1", "B1", "B2", "A2")
+    val baab: List<String> = listOf("B1", "A1", "A2", "B2")
+
+    /** Complementary rounds put each role in every chronological position once per eight-sample unit. */
+    fun blockOrder(round: Int): List<String> {
+        require(round >= 0)
+        return if (round % 2 == 0) abba else baab
+    }
+
+    fun blockOrderName(round: Int): String = if (blockOrder(round) == abba) "ABBA" else "BAAB"
 
     fun pairs(cases: List<BenchmarkCase>, plan: BenchmarkPlan, selectedCaseKey: String? = null): List<BenchmarkPair> {
         val byKey = cases.associateBy(BenchmarkCase::key)

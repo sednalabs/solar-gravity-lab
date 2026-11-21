@@ -25,6 +25,8 @@ ALLOWED_MEMBERS = {
     "research-catalogue.json", "events.ndjson", "summary.json",
 }
 ABBA = ["A1", "B1", "B2", "A2"]
+BAAB = ["B1", "A1", "A2", "B2"]
+TIMING_METRICS = ("gpu_timestamp", "jni_wrapper_elapsed_ns", "thread_cpu_elapsed_ns", "native_setup")
 
 
 def load_export(path: Path) -> tuple[dict[str, bytes], list[str]]:
@@ -120,8 +122,9 @@ def timing_summary(values: list[float]) -> dict[str, Any]:
 
 
 def bootstrap_interval(values: list[float]) -> list[float] | None:
-    # Resample complete ABBA blocks, never correlated samples within a block.
-    # This descriptive interval cannot remove systematic thermal/ordering bias.
+    # Values are log-ratios of complete resampling units. In protocol v3 a
+    # unit contains both complementary blocks; never resample its eight samples
+    # or its two blocks independently. Legacy fixed-order blocks stay descriptive.
     if len(values) < 5:
         return None
     # Statistical resampling deliberately uses a reproducible PRNG. It creates
@@ -131,40 +134,92 @@ def bootstrap_interval(values: list[float]) -> list[float] | None:
     return [quantile(medians, .025), quantile(medians, .975)]
 
 
-def paired_metric_summary(blocks: list[list[dict[str, Any]]], metric: str) -> dict[str, Any]:
-    """Keep device-query, host-boundary and setup clocks as separate populations."""
-    baseline, candidate, changes = [], [], []
-    omitted = 0
-    for block in blocks:
-        values = []
-        for sample in block:
-            native = sample.get("native", {})
-            if metric == "gpu_timestamp":
-                value = native.get("gpu_elapsed_ns") if native.get("gpu_timestamp_valid") is True else None
-            elif metric == "native_setup":
-                value = native.get("setup_ns")
-            else:
-                value = sample.get(metric)
-            values.append(value)
-        if not all(finite_positive(value) for value in values):
-            omitted += 1
-            continue
-        baseline.extend([values[0], values[3]])
-        candidate.extend([values[1], values[2]])
-        changes.append((math.sqrt((values[1] / values[0]) * (values[2] / values[3])) - 1.0) * 100.0)
+def percent_from_log(value: float) -> float:
+    return math.expm1(value) * 100.0
+
+
+def log_effect_summary(values: list[float]) -> dict[str, Any]:
+    interval = bootstrap_interval(values)
     return {
-        "clean_blocks": len(changes), "blocks_without_valid_metric": omitted,
-        "baseline": timing_summary(baseline), "candidate": timing_summary(candidate),
-        "block_change_percent": changes,
-        "median_change_percent": statistics.median(changes) if changes else None,
-        "bootstrap_95_percent_interval": bootstrap_interval(changes),
-        "interpretation": "descriptive_same_ABBA_blocks_only; not_an_independent_production_promotion_test",
+        "median_change_percent": percent_from_log(statistics.median(values)) if values else None,
+        "bootstrap_95_percent_interval": [percent_from_log(value) for value in interval] if interval else None,
     }
 
 
-def environmental_reasons(samples: list[dict[str, Any]]) -> list[str]:
+def metric_value(sample: dict[str, Any], metric: str) -> Any:
+    native = sample.get("native", {})
+    if metric == "gpu_timestamp":
+        return native.get("gpu_elapsed_ns") if native.get("gpu_timestamp_valid") is True else None
+    if metric == "native_setup":
+        return native.get("setup_ns")
+    return sample.get(metric)
+
+
+def metric_log_ratio(samples: list[dict[str, Any]], metric: str) -> float | None:
+    values = [metric_value(sample, metric) for sample in samples]
+    if not all(finite_positive(value) for value in values):
+        return None
+    by_role = {role: [math.log(value) for sample, value in zip(samples, values)
+                      if sample.get("role") == role] for role in ("A", "B")}
+    if not by_role["A"] or len(by_role["A"]) != len(by_role["B"]):
+        return None
+    # Roles remain semantic A/B even when B executes first. Averaging logs
+    # cancels multiplicative first-position effects across complementary orders.
+    return statistics.mean(by_role["B"]) - statistics.mean(by_role["A"])
+
+
+def paired_metric_summary(blocks: list[list[dict[str, Any]]], metric: str,
+                          units: list[list[dict[str, Any]]] | None = None) -> dict[str, Any]:
+    """Retain raw block evidence; estimate v3 effects from balanced units only."""
+    block_logs = [value for block in blocks if (value := metric_log_ratio(block, metric)) is not None]
+    selected_units = blocks if units is None else units
+    valid_units = [(unit, value) for unit in selected_units
+                   if (value := metric_log_ratio(unit, metric)) is not None]
+    logs = [value for _, value in valid_units]
+    return {
+        "clean_blocks": len(block_logs), "blocks_without_valid_metric": len(blocks) - len(block_logs),
+        "statistical_unit": "fixed_order_block" if units is None else "complementary_eight_sample_unit",
+        "resampling_units": len(logs), "units_without_valid_metric": len(selected_units) - len(logs),
+        "baseline": timing_summary([metric_value(sample, metric) for unit, _ in valid_units
+                                    for sample in unit if sample.get("role") == "A"]),
+        "candidate": timing_summary([metric_value(sample, metric) for unit, _ in valid_units
+                                     for sample in unit if sample.get("role") == "B"]),
+        "block_change_percent": [percent_from_log(value) for value in block_logs],
+        "unit_log_ratios": logs, "unit_change_percent": [percent_from_log(value) for value in logs],
+        **log_effect_summary(logs),
+        "interpretation": ("legacy_fixed_order_descriptive_only; systematic_position_bias_is_not_removed"
+                           if units is None else
+                           "complete_complementary_units; separate_clock_population; repeated_sessions_still_required"),
+    }
+
+
+def first_position_summary(blocks: list[list[dict[str, Any]]]) -> dict[str, Any]:
+    metrics = {}
+    for metric in ("elapsed_ns",) + TIMING_METRICS:
+        logs = []
+        for block in blocks:
+            first, last = metric_value(block[0], metric), metric_value(block[-1], metric)
+            if finite_positive(first) and finite_positive(last):
+                logs.append(math.log(first) - math.log(last))
+        metrics[metric] = {"blocks": len(logs), **log_effect_summary(logs)}
+    return {
+        "first_roles_observed": sorted({block[0]["role"] for block in blocks}),
+        "first_vs_last_same_role": metrics,
+        "interpretation": "Positive means the first invocation was slower than the same-role last invocation. "
+                          "This diagnoses position-associated drift; it does not identify its cause or correct timing by subtraction.",
+    }
+
+
+def refresh_changed(values: list[float]) -> bool:
+    # Small reporting jitter is not a mode change; 60/120 Hz transitions are.
+    return bool(values) and not math.isclose(min(values), max(values), rel_tol=.005, abs_tol=.25)
+
+
+def environmental_reasons(samples: list[dict[str, Any]],
+                          extra_environments: list[dict[str, Any]] | None = None) -> list[str]:
     reasons = []
     environments = [sample.get(key, {}) for sample in samples for key in ("environment_before", "environment_after")]
+    environments.extend(extra_environments or [])
     statuses = [env.get("thermal_status") for env in environments]
     if any(isinstance(status, int) and status >= 3 for status in statuses):
         reasons.append("severe_or_higher_thermal_status")
@@ -173,9 +228,158 @@ def environmental_reasons(samples: list[dict[str, Any]]) -> list[str]:
     plugged = {env.get("battery_plugged") for env in environments if env.get("battery_plugged") is not None}
     if len(plugged) > 1:
         reasons.append("charging_state_changed")
+    refresh = [env["display_refresh_hz"] for env in environments if finite_positive(env.get("display_refresh_hz"))]
+    if refresh_changed(refresh):
+        reasons.append("display_refresh_changed")
     if len({sample.get("placement", "system") for sample in samples}) != 1:
         reasons.append("placement_changed")
     return reasons
+
+
+def effective_repeats(sample: dict[str, Any]) -> Any:
+    return sample.get("effective_repeats", sample.get("native", {}).get(
+        "repeats", sample.get("native", {}).get("iterations", sample.get("repeats", 1))))
+
+
+def correctness_reasons(sample: dict[str, Any]) -> list[str]:
+    native = sample.get("native", {})
+    reasons = []
+    if sample.get("status") != "PASS" or native.get("status") != "PASS":
+        reasons.append("failed_or_skipped_correctness_check")
+    flags = ("correctness_checked", "accuracy_pass", "reference_accuracy_pass", "repeat_consistent")
+    if any(key in native and native[key] is not True for key in flags):
+        reasons.append("native_correctness_flag_not_true")
+    acceptance = native.get("forecast_acceptance")
+    if isinstance(acceptance, dict) and "accepted" in acceptance and acceptance["accepted"] is not True:
+        reasons.append("native_forecast_acceptance_not_true")
+    return reasons
+
+
+def calibration_validation_reasons(entries: list[tuple[int, dict[str, Any]]],
+                                   first_measurement_index: int) -> list[str]:
+    if len(entries) != 1:
+        return ["missing_pair_calibration" if not entries else "duplicate_pair_calibration"]
+    index, calibration = entries[0]
+    counts = [calibration.get(key) for key in ("fixed_repeats", "requested_repeats", "max_repeats")]
+    if (calibration.get("protocol_version") != 3
+            or any(type(value) is not int or value <= 0 for value in counts)
+            or not counts[0] <= counts[1] <= counts[2]
+            or type(calibration.get("clamp_rewarmup")) is not bool
+            or calibration["clamp_rewarmup"] != (counts[0] != counts[1])
+            or any(not finite_positive(calibration.get(key)) for key in (
+                "target_native_batch_ns", "pilot_baseline_elapsed_ns", "pilot_candidate_elapsed_ns"))
+            or any(not isinstance(calibration.get(key), str) or not calibration[key].strip()
+                   for key in ("baseline_native_scope", "candidate_native_scope"))):
+        return ["invalid_pair_calibration"]
+    if index >= first_measurement_index:
+        return ["pair_calibration_not_before_measurement"]
+    return []
+
+
+def sample_identity(sample: dict[str, Any]) -> dict[str, Any]:
+    identity = {key: sample.get(key) for key in (
+        "case_id", "fixture_id", "steps", "backend", "placement", "repeats", "elapsed_scope")}
+    identity["effective_repeats"] = effective_repeats(sample)
+    identity["native"] = {key: sample.get("native", {}).get(key) for key in (
+        "elapsed_scope", "timing_scope", "actual_kernel", "physics_model", "comparison_kind", "numerical_policy")}
+    return identity
+
+
+def declared_identity_reasons(samples: list[dict[str, Any]], declarations: list[dict[str, Any]]) -> list[str]:
+    for declaration in declarations:
+        for sample in samples:
+            role_case = "baseline_case" if sample["role"] == "A" else "candidate_case"
+            if role_case in declaration and declaration[role_case] != sample.get("case_id"):
+                return ["recorded_pair_case_identity_mismatch"]
+            if any(key in declaration and declaration[key] != sample.get(key)
+                   for key in ("fixture_id", "steps", "backend", "placement")):
+                return ["recorded_pair_workload_identity_mismatch"]
+            scope_key = "baseline_native_scope" if sample["role"] == "A" else "candidate_native_scope"
+            if scope_key in declaration and declaration[scope_key] != sample.get("elapsed_scope"):
+                return ["recorded_pair_timing_scope_mismatch"]
+    return []
+
+
+def block_validation_reasons(samples: list[dict[str, Any]], round_id: Any, protocol: int,
+                             sample_id_counts: Counter[str], calibrated_repeats: Any) -> list[str]:
+    expected = BAAB if protocol == 3 and type(round_id) is int and round_id % 2 else ABBA
+    if [sample.get("order") for sample in samples] != expected:
+        return ["incomplete_or_duplicate_balanced_block" if protocol == 3 else "incomplete_or_duplicate_abba"]
+    correctness = sorted({reason for sample in samples for reason in correctness_reasons(sample)})
+    if correctness:
+        return correctness
+    if not all(finite_positive(sample.get("elapsed_ns")) for sample in samples):
+        return ["missing_zero_or_nonfinite_kernel_time"]
+    if [sample.get("role") for sample in samples] != [order[0] for order in expected]:
+        return ["inconsistent_abba_roles"]
+    if any(len({sample.get("case_id") for sample in samples if sample["role"] == role}) != 1 for role in ("A", "B")):
+        return ["case_changed_within_block"]
+    if len({(sample.get("fixture_id"), sample.get("steps"), sample.get("backend")) for sample in samples}) != 1:
+        return ["workload_changed_within_block"]
+    repeats = [sample.get("repeats", 1) for sample in samples]
+    effective = [effective_repeats(sample) for sample in samples]
+    if (any(type(value) is not int or value <= 0 for value in repeats + effective)
+            or len(set(repeats)) != 1 or len(set(effective)) != 1):
+        return ["repeat_count_changed_or_invalid_within_block"]
+    if repeats != effective:
+        return ["requested_repeat_count_not_executed"]
+    for sample in samples:
+        native = sample.get("native", {})
+        if any(key in native and native[key] != sample.get(key)
+               for key in ("case_id", "fixture_id", "steps")):
+            return ["native_workload_identity_mismatch"]
+        native_repeats = native.get("repeats", native.get("iterations"))
+        if native_repeats is not None and native_repeats != effective_repeats(sample):
+            return ["native_repeat_count_mismatch"]
+    native_scopes = [sample.get("native", {}).get("timing_scope") for sample in samples]
+    if len({scope for scope in native_scopes if isinstance(scope, str)}) > 1:
+        return ["native_timing_scope_changed_within_block"]
+    if protocol == 3:
+        if type(round_id) is not int or round_id < 0:
+            return ["invalid_counterbalanced_round"]
+        if any(any(not isinstance(sample.get(key), str) or not sample[key]
+                   for key in ("case_id", "fixture_id", "backend"))
+               or type(sample.get("steps")) is not int or sample["steps"] <= 0 for sample in samples):
+            return ["incomplete_counterbalanced_workload_identity"]
+        if any(not isinstance(scope, str) or not scope.strip() for scope in native_scopes):
+            return ["native_timing_scope_unavailable"]
+        if any(sample.get("elapsed_scope") != sample["native"].get("elapsed_scope", sample["native"]["timing_scope"])
+               for sample in samples):
+            return ["native_elapsed_scope_mismatch"]
+        if (any(sample.get("protocol_version") != 3 or type(sample.get("counterbalanced_unit")) is not int
+                or sample["counterbalanced_unit"] != round_id // 2
+                or sample.get("block_order") != "".join(order[0] for order in expected)
+                or sample.get("phase") != "measurement" or type(sample.get("position_in_block")) is not int
+                for sample in samples)
+                or [sample.get("position_in_block") for sample in samples] != list(range(4))):
+            return ["counterbalanced_schedule_metadata_mismatch"]
+        if any(not isinstance(sample.get("sample_id"), str) or not sample["sample_id"]
+               or sample_id_counts[sample["sample_id"]] != 1 for sample in samples):
+            return ["missing_or_duplicate_sample_id"]
+        epochs = [sample.get("thermal_epoch") for sample in samples]
+        if any(type(epoch) is not int or epoch < 0 for epoch in epochs) or len(set(epochs)) != 1:
+            return ["missing_or_changed_thermal_epoch"]
+        if calibrated_repeats is not None and effective[0] != calibrated_repeats:
+            return ["calibrated_repeat_count_mismatch"]
+    return []
+
+
+def balanced_unit_reasons(blocks: list[dict[str, Any]], unit: int,
+                          extra_environments: list[dict[str, Any]] | None = None) -> list[str]:
+    if len(blocks) != 2 or [block["round"] for block in blocks] != [2 * unit, 2 * unit + 1]:
+        return ["missing_or_duplicate_complementary_block"]
+    if any(block["reasons"] for block in blocks):
+        return ["invalid_or_confounded_constituent_block"]
+    samples = [sample for block in blocks for sample in block["samples"]]
+    if len({sample["thermal_epoch"] for sample in samples}) != 1:
+        return ["thermal_epoch_changed_between_blocks"]
+    if any(len({sample.get("case_id") for sample in samples if sample["role"] == role}) != 1 for role in ("A", "B")):
+        return ["case_changed_between_blocks"]
+    if len({(sample.get("fixture_id"), sample.get("steps"), sample.get("backend"),
+             sample.get("repeats", 1), effective_repeats(sample), sample.get("elapsed_scope"),
+             sample.get("native", {}).get("elapsed_scope")) for sample in samples}) != 1:
+        return ["workload_batch_or_timing_scope_changed_between_blocks"]
+    return environmental_reasons(samples, extra_environments)
 
 
 def error_metrics(value: Any, path: str = "") -> dict[str, float]:
@@ -288,10 +492,7 @@ def pipeline_cache_summary(renderers: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def observation_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Keep observational telemetry separate from controlled kernel comparisons."""
-    snapshots = [r["data"] for r in records if r.get("event") == "observatory_snapshot"]
-    renderers = [r["data"] for r in records if r.get("event") == "observatory_renderer"]
+def recorded_environments(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     environments: dict[int, dict[str, Any]] = {}
     for record in records:
         data = record.get("data", {})
@@ -299,8 +500,20 @@ def observation_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
         for env in candidates:
             if isinstance(env, dict) and isinstance(env.get("monotonic_ns"), int):
                 environments[env["monotonic_ns"]] = env
-    ordered = [environments[key] for key in sorted(environments)]
+    return [environments[key] for key in sorted(environments)]
+
+
+def observation_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep observational telemetry separate from controlled kernel comparisons."""
+    snapshots = [r["data"] for r in records if r.get("event") == "observatory_snapshot"]
+    renderers = [r["data"] for r in records if r.get("event") == "observatory_renderer"]
+    ordered = recorded_environments(records)
     thermal = Counter(str(env.get("thermal_status", "unavailable")) for env in ordered)
+    refresh = [(env["monotonic_ns"], env["display_refresh_hz"]) for env in ordered
+               if finite_positive(env.get("display_refresh_hz"))]
+    refresh_transitions = [
+        {"monotonic_ns": current[0], "from_hz": previous[1], "to_hz": current[1]}
+        for previous, current in zip(refresh, refresh[1:]) if refresh_changed([previous[1], current[1]])]
     plugged = {env.get("battery_plugged") for env in ordered if isinstance(env.get("battery_plugged"), int)}
     energy = [(env["monotonic_ns"], env["battery_energy_counter_nwh"]) for env in ordered
               if isinstance(env.get("battery_energy_counter_nwh"), (int, float))
@@ -336,6 +549,10 @@ def observation_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     return {"runtime_snapshot_count": len(snapshots), "renderer_callback_count": len(renderers),
             "scenarios": scenarios, "queue_dropped_events": dropped,
             "environment_observation_count": len(ordered), "thermal_status_observation_counts": dict(thermal),
+            "display_refresh": {"observations": len(refresh),
+                                "observed_hz": sorted({round(value, 3) for _, value in refresh}),
+                                "observed_transitions": refresh_transitions,
+                                "interpretation": "Periodic cached observations, not a continuous mode trace. Default display policy does not establish a fixed refresh rate."},
             "battery_plugged_values": sorted(plugged), "battery_energy": energy_result,
             "gpu_last_completed_sample": timing_summary(frames), "gpu_pregraphics_sample": timing_summary(pregraphics),
             "gpu_sample_counter_resets": resets, "ui_vsync_interval": timing_summary(ui_intervals),
@@ -347,11 +564,32 @@ def observation_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
 def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[str, Any]:
     warnings = list(warnings or [])
     manifest = json.loads(files["manifest.json"])
+    protocol = manifest.get("protocol_version", 1)
     records, journal_warnings = read_journal(files["events.ndjson"])
     warnings.extend(journal_warnings)
     if not any(record.get("event") == "session_end" for record in records):
         warnings.append("No session_end record: this is an interrupted or still-running session.")
     samples = [r["data"] for r in records if r.get("event") == "sample" and isinstance(r.get("data"), dict)]
+    sample_id_counts = Counter(s["sample_id"] for s in samples if isinstance(s.get("sample_id"), str))
+    calibrations: dict[str, list[tuple[int, dict[str, Any]]]] = defaultdict(list)
+    sample_indices = {}
+    sample_windows = {}
+    starts = {}
+    for index, record in enumerate(records):
+        data = record.get("data", {})
+        if record.get("event") == "pair_calibration":
+            calibrations[str(data.get("pair"))].append((index, data))
+        elif record.get("event") == "sample_start" and isinstance(data.get("sample_id"), str):
+            starts.setdefault(data["sample_id"], record["monotonic_ns"])
+        elif record.get("event") == "sample":
+            sample_indices[id(data)] = index
+            sample_windows[id(data)] = (starts.get(data.get("sample_id"), record["monotonic_ns"]), record["monotonic_ns"])
+    environment_trace = recorded_environments(records)
+
+    def environments_during(selected: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        first = min(sample_windows[id(sample)][0] for sample in selected)
+        last = max(sample_windows[id(sample)][1] for sample in selected)
+        return [env for env in environment_trace if first <= env["monotonic_ns"] <= last]
     thermal_paused_blocks = {
         (str(r["data"].get("pair", "unknown")), r["data"].get("round", 0), r["data"].get("block", 0))
         for r in records if r.get("event") == "paired_block" and r.get("data", {}).get("crossed_thermal_pause")
@@ -361,9 +599,11 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
     failed_admission: Counter[str] = Counter()
     for sample in samples:
         pair = str(sample.get("pair", "unknown"))
-        if sample.get("status") == "FAIL" or sample.get("native", {}).get("status") == "FAIL":
+        if (sample.get("status") == "FAIL" or sample.get("native", {}).get("status") == "FAIL"
+                or any(reason != "failed_or_skipped_correctness_check" for reason in correctness_reasons(sample))):
             failed_admission[pair] += 1
-        if sample.get("warmup") or str(sample.get("order", "")).startswith("warmup"):
+        if (sample.get("warmup") or sample.get("phase") in ("warmup", "calibration")
+                or str(sample.get("order", "")).startswith("warmup")):
             continue
         groups[pair].append(sample)
         blocks[(pair, sample.get("round", 0), sample.get("block", 0))].append(sample)
@@ -372,56 +612,92 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
         groups.setdefault(pair, [])
     comparisons = []
     for pair, pair_samples in sorted(groups.items()):
-        changes = []
+        calibration_entries = calibrations.get(pair, [])
+        pair_contract_reasons = []
+        declarations = []
+        fixed_repeats = None
+        if protocol == 3:
+            pair_contract_reasons.extend(calibration_validation_reasons(
+                calibration_entries, min((sample_indices[id(s)] for s in pair_samples), default=len(records))))
+            if len(calibration_entries) == 1:
+                calibration = calibration_entries[0][1]
+                declarations.append(calibration)
+                fixed_repeats = calibration.get("fixed_repeats")
+            if "schedule" in manifest:
+                schedule = manifest["schedule"]
+                scheduled = [entry for entry in schedule if isinstance(entry, dict) and entry.get("pair") == pair] if isinstance(schedule, list) else []
+                if len(scheduled) != 1:
+                    pair_contract_reasons.append("missing_or_duplicate_manifest_pair")
+                else:
+                    declarations.append(scheduled[0])
+        frozen_identity = {}
+        contract_violations: Counter[str] = Counter(pair_contract_reasons)
         raw_changes = []
         clean_blocks = []
+        block_diagnostics = []
+        unit_blocks: dict[int, list[dict[str, Any]]] = defaultdict(list)
         exclusions: Counter[str] = Counter()
         for (block_pair, _round, _block), block_samples in blocks.items():
             if block_pair != pair:
                 continue
-            if [sample.get("order") for sample in block_samples] != ABBA:
-                exclusions["incomplete_or_duplicate_abba"] += 1
-                continue
-            if any(sample.get("status") != "PASS" or sample.get("native", {}).get("status") != "PASS" for sample in block_samples):
-                exclusions["failed_or_skipped_correctness_check"] += 1
-                continue
-            times = [sample.get("elapsed_ns") for sample in block_samples]
-            if not all(finite_positive(value) for value in times):
-                exclusions["missing_zero_or_nonfinite_kernel_time"] += 1
-                continue
-            if [sample.get("role") for sample in block_samples] != ["A", "B", "B", "A"]:
-                exclusions["inconsistent_abba_roles"] += 1
-                continue
-            if block_samples[0].get("case_id") != block_samples[3].get("case_id") or block_samples[1].get("case_id") != block_samples[2].get("case_id"):
-                exclusions["case_changed_within_block"] += 1
-                continue
-            if len({(sample.get("fixture_id"), sample.get("steps"), sample.get("backend")) for sample in block_samples}) != 1:
-                exclusions["workload_changed_within_block"] += 1
-                continue
-            repeats = [sample.get("repeats", 1) for sample in block_samples]
-            effective = [sample.get("effective_repeats", sample.get("native", {}).get(
-                "repeats", sample.get("native", {}).get("iterations", sample.get("repeats", 1))))
-                         for sample in block_samples]
-            if (any(type(value) is not int or value <= 0 for value in repeats + effective)
-                    or len(set(repeats)) != 1 or len(set(effective)) != 1):
-                exclusions["repeat_count_changed_or_invalid_within_block"] += 1
-                continue
-            if repeats != effective:
-                exclusions["requested_repeat_count_not_executed"] += 1
-                continue
-            ratio = math.sqrt((times[1] / times[0]) * (times[2] / times[3]))
-            change = (ratio - 1.0) * 100.0
-            raw_changes.append(change)
-            reasons = environmental_reasons(block_samples)
-            if (block_pair, _round, _block) in thermal_paused_blocks:
-                reasons.append("crossed_thermal_pause")
-            if reasons:
-                exclusions.update(reasons)
-            else:
-                changes.append(change)
+            reasons = block_validation_reasons(block_samples, _round, protocol, sample_id_counts,
+                                               fixed_repeats)
+            if protocol == 3:
+                reasons.extend(reason for reason in pair_contract_reasons if reason not in reasons)
+                if not reasons:
+                    declared_reasons = declared_identity_reasons(block_samples, declarations)
+                    reasons.extend(declared_reasons)
+                    contract_violations.update(declared_reasons)
+                    if not reasons:
+                        if not frozen_identity:
+                            frozen_identity = {sample["role"]: sample_identity(sample) for sample in block_samples}
+                        if any(sample_identity(sample) != frozen_identity[sample["role"]] for sample in block_samples):
+                            reasons.append("pair_identity_changed_across_comparison")
+                            contract_violations["pair_identity_changed_across_comparison"] += 1
+            value = None
+            if not reasons:
+                value = metric_log_ratio(block_samples, "elapsed_ns")
+                raw_changes.append(percent_from_log(value))
+                reasons = environmental_reasons(block_samples, environments_during(block_samples))
+                if (block_pair, _round, _block) in thermal_paused_blocks:
+                    reasons.append("crossed_thermal_pause")
+            exclusions.update(reasons)
+            if not reasons:
                 clean_blocks.append(block_samples)
-        baseline = [s["elapsed_ns"] for s in pair_samples if s.get("role") == "A" and s.get("status") == "PASS" and finite_positive(s.get("elapsed_ns"))]
-        candidate = [s["elapsed_ns"] for s in pair_samples if s.get("role") == "B" and s.get("status") == "PASS" and finite_positive(s.get("elapsed_ns"))]
+            block_diagnostics.append({"round": _round, "block": _block,
+                                      "chronological_order": [s.get("order") for s in block_samples],
+                                      "sample_ids": [s.get("sample_id") for s in block_samples],
+                                      "change_percent": percent_from_log(value) if value is not None else None,
+                                      "excluded_reasons": reasons})
+            if protocol == 3 and type(_round) is int and _round >= 0:
+                unit_blocks[_round // 2].append({"round": _round, "samples": block_samples, "reasons": reasons})
+        if protocol == 3 and frozen_identity and any(
+                sample.get("role") not in frozen_identity
+                or sample_identity(sample) != frozen_identity[sample["role"]] for sample in pair_samples):
+            # Do not let a later cohort, or an invalid block carrying changed
+            # metadata, silently redefine the experiment under the same pair key.
+            contract_violations["pair_identity_changed_across_comparison"] = max(
+                1, contract_violations["pair_identity_changed_across_comparison"])
+        units = []
+        unit_diagnostics = []
+        unit_exclusions: Counter[str] = Counter()
+        for unit, constituent_blocks in sorted(unit_blocks.items()):
+            unit_samples = [sample for block in constituent_blocks for sample in block["samples"]]
+            reasons = balanced_unit_reasons(constituent_blocks, unit, environments_during(unit_samples))
+            unit_exclusions.update(reasons)
+            value = None
+            if not reasons:
+                units.append(unit_samples)
+                value = metric_log_ratio(unit_samples, "elapsed_ns")
+            unit_diagnostics.append({"counterbalanced_unit": unit,
+                                     "sample_ids": [s.get("sample_id") for s in unit_samples],
+                                     "change_percent": percent_from_log(value) if value is not None else None,
+                                     "excluded_reasons": reasons})
+        effect = paired_metric_summary(clean_blocks, "elapsed_ns", units if protocol == 3 else None)
+        passed = [s for s in pair_samples if not correctness_reasons(s)
+                  and finite_positive(s.get("elapsed_ns"))]
+        baseline = [s["elapsed_ns"] for s in passed if s.get("role") == "A"]
+        candidate = [s["elapsed_ns"] for s in passed if s.get("role") == "B"]
         maximum_errors: dict[str, float] = {}
         policies = set()
         comparison_kinds = set()
@@ -438,20 +714,26 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
                     policies.add(str(native["numerical_policy"]))
                 for key, value in error_metrics(native).items():
                     maximum_errors[key] = max(value, maximum_errors.get(key, 0.0))
-        interval = bootstrap_interval(changes)
-        median_change = statistics.median(changes) if changes else None
+        interval = effect["bootstrap_95_percent_interval"]
+        median_change = effect["median_change_percent"]
         statuses = Counter(str(sample.get("status", "INVALID")) for sample in pair_samples)
         self_control = {s.get("case_id") for s in pair_samples if s.get("role") == "A"} == {s.get("case_id") for s in pair_samples if s.get("role") == "B"}
         if failed_admission[pair]:
             decision = "correctness_failure_requires_investigation"
+        elif protocol == 3 and contract_violations:
+            decision = "measurement_contract_requires_investigation"
         elif self_control:
             decision = "repeatability_control"
         elif "different_force_model_cost" in comparison_kinds:
             decision = "different_physics_cost_only"
         elif "accuracy_cost_experiment" in comparison_kinds:
             decision = "accuracy_cost_tradeoff_requires_domain_review"
-        elif len(changes) < 5:
-            decision = "insufficient_clean_blocks"
+        elif protocol in (1, 2):
+            decision = "legacy_fixed_order_descriptive_only"
+        elif protocol != 3:
+            decision = "unsupported_measurement_protocol"
+        elif effect["resampling_units"] < 5:
+            decision = "insufficient_clean_counterbalanced_units"
         elif interval and interval[1] < -1.0 and median_change is not None and median_change <= -5.0:
             decision = "promising_candidate_repeat_on_device"
         elif interval and interval[0] > 1.0:
@@ -460,10 +742,22 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
             decision = "no_clear_practical_gain"
         comparisons.append({
             "pair": pair, "status_counts": dict(statuses), "baseline": timing_summary(baseline),
+            "pair_calibration_records": len(calibration_entries),
+            "measurement_contract_violations": dict(contract_violations), "frozen_pair_identity": frozen_identity,
             "candidate": timing_summary(candidate), "complete_valid_blocks": len(raw_changes),
-            "clean_blocks": len(changes), "excluded_reasons": dict(exclusions),
-            "block_change_percent": changes, "all_valid_block_change_percent": raw_changes,
+            "pooled_timing_scope": "positive_PASS_measured_role_samples_including_excluded_blocks; not_the_paired_effect_estimator",
+            "clean_blocks": len(clean_blocks), "excluded_reasons": dict(exclusions),
+            "block_change_percent": effect["block_change_percent"], "all_valid_block_change_percent": raw_changes,
+            "raw_block_diagnostics": block_diagnostics,
+            "statistical_unit": effect["statistical_unit"], "resampling_units": effect["resampling_units"],
+            "clean_counterbalanced_units": len(units) if protocol == 3 else 0,
+            "counterbalanced_unit_diagnostics": unit_diagnostics,
+            "excluded_unit_reasons": dict(unit_exclusions),
+            "unit_log_ratios": effect["unit_log_ratios"], "unit_change_percent": effect["unit_change_percent"],
             "median_change_percent": median_change, "bootstrap_95_percent_interval": interval,
+            "estimate_interpretation": effect["interpretation"],
+            "first_position_diagnostic": first_position_summary(clean_blocks),
+            "self_control": self_control,
             "maximum_reported_error_metrics": maximum_errors, "numerical_policies": sorted(policies),
             "comparison_kinds": sorted(comparison_kinds),
             "legacy_precision_classification_inferred": any(
@@ -471,23 +765,48 @@ def analyse(files: dict[str, bytes], warnings: list[str] | None = None) -> dict[
                 and s.get("case_id") in {"gpu.visual-fp16", "gpu.passive-fp64", "opencl.passive-fp64"}
                 for s in pair_samples),
             "failed_samples_including_calibration_and_warmup": failed_admission[pair],
-            "separate_timing_metrics": {metric: paired_metric_summary(clean_blocks, metric) for metric in (
-                "gpu_timestamp", "jni_wrapper_elapsed_ns", "thread_cpu_elapsed_ns", "native_setup")},
+            "separate_timing_metrics": {metric: paired_metric_summary(
+                clean_blocks, metric, units if protocol == 3 else None) for metric in TIMING_METRICS},
             "declared_native_timing_scopes": {
                 role: sorted({str(s.get("native", {}).get("timing_scope", "unspecified"))
                               for s in pair_samples if s.get("role") == role}) for role in ("A", "B")},
             "decision": decision,
         })
+    if comparisons and protocol in (1, 2):
+        warnings.append("Legacy fixed-ABBA order: all effects are descriptive. A first-in-block penalty can favour B even in a self-control; block bootstrapping does not remove that bias.")
+    self_controls = []
+    for comparison in comparisons:
+        if not comparison["self_control"]:
+            continue
+        metrics = {"elapsed_ns": {key: comparison[key] for key in (
+            "median_change_percent", "bootstrap_95_percent_interval", "resampling_units")},
+                   **comparison["separate_timing_metrics"]}
+        affected = []
+        for metric, result in metrics.items():
+            interval = result["bootstrap_95_percent_interval"]
+            value = result["median_change_percent"]
+            if value is not None and abs(value) >= 5 and interval and (interval[1] < -1 or interval[0] > 1):
+                affected.append(metric)
+        self_controls.append({"pair": comparison["pair"], "metrics": metrics,
+                              "systematic_difference_metrics": affected,
+                              "interpretation": "Identical-case control; nonzero effects flag repeatability or ordering conditions. Different workloads are not interchangeable controls; no correction is subtracted."})
+        if affected:
+            warnings.append(f"Self-control {comparison['pair']} has a systematic difference in {', '.join(affected)}. Treat claims in those timing scopes cautiously; do not apply its magnitude to a different workload.")
+    observations = observation_summary(records)
+    if observations["display_refresh"]["observed_transitions"]:
+        warnings.append("Display refresh transitions were observed. Blocks and complementary units spanning an observed transition are excluded; cached telemetry cannot establish fixed conditions between observations.")
     admission = [r["data"] for r in records if r.get("event") == "case_admission"]
     identity = {name: hashlib.sha256(files[name]).hexdigest() for name in ("manifest.json", "device.json", "catalogue.json") if name in files}
     return {"schema_version": 1, "manifest": manifest, "source_file_sha256": identity,
             "warnings": warnings, "sample_count": len(samples), "case_admission": admission,
-            "comparisons": comparisons, "observations": observation_summary(records), "promotion": "none",
+            "comparisons": comparisons, "self_control_diagnostics": self_controls,
+            "observations": observations, "promotion": "none",
             "limitations": [
                 "Timing scope is whatever each native result declares; compare matched scopes only.",
                 "GPU timestamp, JNI wall time, calling-thread CPU time and native setup time are separate metrics. A host timing change does not establish a GPU execution change.",
-                "Bootstrap intervals resample ABBA blocks and do not remove systematic device drift.",
-                "Quick plans are exploratory; five or more clean blocks are needed for a candidate decision.",
+                "Protocol v3 resamples complete complementary ABBA/BAAB units in log-ratio space. Legacy fixed-order intervals remain descriptive and cannot remove position bias.",
+                "Quick plans are exploratory; five or more clean complementary units and repeated physical sessions are needed to investigate a candidate.",
+                "Refresh, thermal and charging observations are cached snapshots, not evidence of continuously fixed operating conditions.",
                 "Battery counters cover the whole device, including validation/reporting/display work.",
                 "A correctness PASS covers the recorded fixture and tolerance, not general scientific validity.",
                 "No runtime dispatch profile or scientific default is automatically changed.",
@@ -528,25 +847,38 @@ def markdown(report: dict[str, Any]) -> str:
                 f"latest save status: **{latest.get('save', 'unavailable')}**.", "",
                 cache["interpretation"], "",
             ]
-    lines += ["", "| Matched workload | Clean blocks | Median time change | Decision |", "|---|---:|---:|---|"]
+    lines += ["", "| Matched workload | Clean blocks | Resampling units | Median time change | Decision |", "|---|---:|---:|---:|---|"]
     for comparison in report["comparisons"]:
         change = comparison["median_change_percent"]
         label = comparison["pair"].replace("|", "\\|").replace("\n", " ")
         value = "unavailable" if change is None else f"{change:+.2f}%"
-        lines.append(f"| {label} | {comparison['clean_blocks']} | {value} | {comparison['decision']} |")
+        lines.append(f"| {label} | {comparison['clean_blocks']} | {comparison['resampling_units']} | {value} | {comparison['decision']} |")
     gpu_comparisons = [comparison for comparison in report["comparisons"]
-                       if comparison["separate_timing_metrics"]["gpu_timestamp"]["clean_blocks"]]
+                       if comparison["separate_timing_metrics"]["gpu_timestamp"]["resampling_units"]]
     if gpu_comparisons:
         lines += ["", "## Native GPU query intervals", "",
                   "These queries measure the native GPU interval independently of host submission/completion latency. They are not whole-frame or energy measurements.", "",
-                  "| Matched workload | Valid blocks | Baseline GPU interval | Candidate GPU interval | Paired GPU change |",
+                  "| Matched workload | Valid resampling units | Baseline GPU interval | Candidate GPU interval | Paired GPU change |",
                   "|---|---:|---:|---:|---:|"]
         for comparison in gpu_comparisons:
             metric = comparison["separate_timing_metrics"]["gpu_timestamp"]
             label = comparison["pair"].replace("|", "\\|").replace("\n", " ")
-            lines.append(f"| {label} | {metric['clean_blocks']} | {metric['baseline']['median_ns'] / 1000:.3f} µs | "
+            lines.append(f"| {label} | {metric['resampling_units']} | {metric['baseline']['median_ns'] / 1000:.3f} µs | "
                          f"{metric['candidate']['median_ns'] / 1000:.3f} µs | {metric['median_change_percent']:+.2f}% |")
-    lines += ["", "A negative change means the candidate took less time. Failed, skipped, incomplete and thermally confounded blocks remain in JSON and are excluded from clean comparisons.", "", "## Interpretation limits", ""]
+    controls = [comparison for comparison in report["comparisons"] if comparison["self_control"]]
+    if controls:
+        lines += ["", "## Repeatability and first-position diagnostics", "",
+                  "Each row compares a case with itself. The first/last column compares the first invocation with the same-role last invocation within each block; positive means the first was slower. No control-derived correction is subtracted from another workload.", "",
+                  "| Identical-case control | Native paired change | Native first/last change | GPU paired change |",
+                  "|---|---:|---:|---:|"]
+        for comparison in controls:
+            first = comparison["first_position_diagnostic"]["first_vs_last_same_role"]["elapsed_ns"]
+            values = [comparison["median_change_percent"], first["median_change_percent"],
+                      comparison["separate_timing_metrics"]["gpu_timestamp"]["median_change_percent"]]
+            labels = ["unavailable" if value is None else f"{value:+.2f}%" for value in values]
+            label = comparison["pair"].replace("|", "\\|").replace("\n", " ")
+            lines.append(f"| {label} | {' | '.join(labels)} |")
+    lines += ["", "A negative change means the candidate took less time. Protocol v3 estimates use complete eight-sample complementary units; legacy estimates describe fixed-order blocks. Raw blocks, excluded units, and first-position diagnostics for every timing scope remain in JSON.", "", "## Interpretation limits", ""]
     lines.extend(f"- {limitation}" for limitation in report["limitations"])
     return "\n".join(lines) + "\n"
 

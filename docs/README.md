@@ -101,6 +101,9 @@ for the commit-by-commit scope and which checkpoints remain historical.
   controls, comparison rules and remaining implementation boundaries. Its
   publication and phone acceptance are separate from the historical delivery
   snapshot above.
+- [First benchmark.2 S25 recording](device-research-s25-benchmark2.md) records
+  the measured subgroup gain, negative rsqrt/FP16 findings and first-position
+  bias that motivated counterbalanced protocol v3.
 - [Vulkan runtime acceleration qualification](vulkan-runtime-qualification-20261118.md)
   records optional workload gates, profiling switches and the separate device
   acceptance requirements for the post-#242 implementation.

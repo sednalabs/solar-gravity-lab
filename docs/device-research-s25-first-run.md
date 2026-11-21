@@ -15,7 +15,7 @@ the first installed build, not the performance of the subsequent changes.
 | Release | [0.2.0-benchmark.1](https://github.com/sednalabs/solar-gravity-lab/releases/tag/v0.2.0-benchmark.1) |
 | Device | Galaxy S25 Ultra SM-S938B; QTI SM8750; Adreno 830 |
 | Platform | Android 17 / SDK 37; 4 KiB pages; observed display 1080 × 2340 at 120 Hz |
-| Integrity | All seven indexed files verified; no journal warning |
+| Integrity | Six indexed payloads verified, seven ZIP members including index; no journal warning |
 | Run | 1.503823124 seconds; 26 workloads; 52 complete ABBA blocks |
 | Results | 208 measured PASS samples plus 52 warmup PASS samples; zero FAIL |
 | Environment | Two distinct cached observations; AC plugged; energy counter unavailable |

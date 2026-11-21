@@ -130,20 +130,25 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
                     state.runPair(task.first, task.second, round)
                     visitedThisRound++
                     state.progress = state.progress.copy(pairsCompleted = state.ledger.visitedPairs)
-                    state.publish("Comparing", "Round ${round + 1} · ${task.first.candidate.label}. ${state.ledger.attemptedBlocks} ABBA blocks recorded.")
+                    state.publish("Comparing", "Round ${round + 1} · ${task.first.candidate.label}. ${state.ledger.attemptedBlocks} comparison blocks recorded.")
                 }
                 state.lastRoundVisited = visitedThisRound
                 round++
                 state.roundsVisited = round
             } while (!state.expired() && !state.blockBudgetReached() &&
-                BenchmarkProtocol.needsAnotherRound(plan, state.activeObservationNs(), state.ledger.activeCompleteBlocks()))
+                BenchmarkProtocol.needsAnotherRound(plan, state.activeObservationNs(), state.ledger.activeCompleteUnits(),
+                    state.ledger.hasUnmatchedActiveUnits()))
             if (state.expired()) {
                 if (store.journalBudgetReached(session)) {
                     state.outcome = "storage_budget_exhausted"
                     state.reason = "256_MiB_journal_budget_reached; completed_records_preserved"
                 } else {
-                    state.outcome = if (plan == BenchmarkPlan.SUSTAINED) "completed" else "budget_exhausted"
-                    state.reason = "elapsed_budget_reached; unrun_cases_are_not_execution_evidence"
+                    val targetsMet = BenchmarkProtocol.completionTargetsMet(plan, state.activeObservationNs(),
+                        state.ledger.activeCompleteUnits(), state.ledger.hasUnmatchedActiveUnits())
+                    state.outcome = if (targetsMet) "completed" else "budget_exhausted"
+                    state.reason = if (targetsMet)
+                        "elapsed_budget_reached_with_duration_and_complete_counterbalanced_unit_targets; offline_clean_unit_qualification_required"
+                    else "elapsed_budget_reached_before_all_duration_and_counterbalanced_unit_targets; unmatched_blocks_and_target_shortfalls_retained"
                 }
             } else if (state.blockBudgetReached()) {
                 state.outcome = "sample_budget_exhausted"
@@ -152,7 +157,7 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
                 state.outcome = if (state.progress.fail > 0) "failed" else "unavailable"
                 state.reason = "all_pairs_retired; see_raw_calibration_warmup_and_block_failures"
             } else if (tasks.isNotEmpty()) {
-                state.reason = "duration_and_complete_block_targets_reached; offline_clean_block_qualification_required"
+                state.reason = "duration_and_complete_counterbalanced_unit_targets_reached; offline_clean_unit_qualification_required"
             }
         } catch (cancelled: CancellationException) {
             state.outcome = "cancelled"; state.reason = cancelled.message ?: "user_or_foreground_lifecycle_cancelled"
@@ -190,8 +195,9 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
         val thermal = ThermalPausePolicy()
         var outcome = "completed"
         var reason = "all_scheduled_comparisons_completed"
-        var pausedNs = 0L
-        var thermalEpoch = 0
+        val thermalAccounting = BenchmarkThermalAccounting()
+        val pausedNs: Long get() = thermalAccounting.pausedNs
+        val thermalEpoch: Int get() = thermalAccounting.epoch
         var hint: PerformanceHintManager.Session? = null
         var lastUiPublishNs = 0L
         val manifest: JSONObject = JSONObject().put("schema_version", 1).put("session_id", session.name)
@@ -203,14 +209,17 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             .put("orientation_lock_requested", options.orientationLockRequested)
             .put("orientation_policy", "request_current_orientation_only_while_running; platform_may_ignore; onStop_cancels_and_retains_partial")
             .put("performance_hints_requested", options.performanceHints).put("benchmark_thread_tid", Process.myTid())
-            .put("protocol_version", 2)
-            .put("protocol", "retained one-repeat A/B pilots; shared batch calibrated then A/B warmup; one ordered A1,B1,B2,A2 block per pair per balanced round; fixture and steps unchanged")
+            .put("protocol_version", BenchmarkProtocol.VERSION)
+            .put("protocol", "retained one-repeat A/B pilots; shared batch calibrated then A/B warmup; even-round A1,B1,B2,A2 then odd-round B1,A1,A2,B2 form one eight-sample counterbalanced unit; A remains baseline and B candidate; fixture and steps unchanged")
             .put("minimum_observation_seconds", plan.minimumObservationSeconds)
             .put("minimum_observation_scope", "session elapsed minus thermal pauses; includes native work, setup, correctness checks and recording; no idle duration padding")
             .put("minimum_complete_blocks_per_pair", plan.minimumCompleteBlocks)
+            .put("minimum_complete_counterbalanced_units_per_pair", plan.minimumCompleteCounterbalancedUnits)
             .put("maximum_measured_blocks", plan.maximumMeasuredBlocks)
             .put("complete_block_scope", "four positive PASS samples at fixed repeats and one thermal epoch; offline environmental checks may exclude further blocks")
-            .put("round_policy", "one block per active pair before another round; deterministic rotating start; unavailable/failed pair retirement never retires other pairs sharing its baseline")
+            .put("complete_counterbalanced_unit_scope", "two complementary consecutive-round blocks; eight positive PASS samples at fixed repeats and one thermal epoch; raw samples and offline qualification remain authoritative")
+            .put("counterbalanced_estimator", "geometric_mean_of_complementary_block_B_over_A_ratios; resample_complete_units_not_individual_blocks_or_native_repeats")
+            .put("round_policy", "one block per active pair before another round; deterministic rotating start; alternate ABBA and BAAB; normal completion closes active complementary units; unavailable/failed pair retirement never retires other pairs sharing its baseline")
             .put("timing_scope", "native elapsed_ns with native elapsed_scope; consult native timed-scope for scratch allocation/thread costs; Java telemetry and file IO excluded")
             .put("native_repeats", "calibrated_and_frozen_per_pair; inspect_pair_calibration_and_each_sample")
             .put("hardware_iterations", "calibrated_and_frozen_per_pair; native elapsed may be total-of-iterations")
@@ -305,7 +314,7 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
                     return
                 }
                 fixedRepeats[pairKey] = repeats
-                record(session, "pair_calibration", JSONObject().put("pair", pairKey).put("protocol_version", 2)
+                record(session, "pair_calibration", JSONObject().put("pair", pairKey).put("protocol_version", BenchmarkProtocol.VERSION)
                     .put("target_native_batch_ns", BenchmarkProtocol.TARGET_NATIVE_BATCH_NS)
                     .put("pilot_baseline_elapsed_ns", pilotA.elapsedNs).put("pilot_candidate_elapsed_ns", pilotB.elapsedNs)
                     .put("requested_repeats", requested).put("fixed_repeats", repeats)
@@ -318,22 +327,35 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             val batchRepeats = requireNotNull(repeats)
             if (expired() || blockBudgetReached()) return
             val observations = mutableListOf<BenchmarkObservedSample>()
-            for (order in BenchmarkSchedule.abba) {
+            val orders = BenchmarkSchedule.blockOrder(round)
+            ledger.beginBlock(pairKey, round)
+            for (order in orders) {
                 observations += sample(pair, placementMode, round, 0, order, "measurement", batchRepeats) ?: break
             }
             val complete = observations.size == 4 && observations.all {
                 it.status == "PASS" && it.elapsedNs != null && it.elapsedNs > 0 && it.effectiveRepeats == batchRepeats
             } && observations.map { it.thermalEpoch }.distinct().size == 1
-            ledger.recordBlock(pairKey, complete)
-            val a = observations.filterIndexed { index, _ -> index == 0 || index == 3 }.map { it.elapsedNs }
-            val b = observations.filterIndexed { index, _ -> index == 1 || index == 2 }.map { it.elapsedNs }
-            record(session, "paired_block", JSONObject().put("pair", pairKey).put("round", round).put("block", 0)
-                .put("complete_abba", complete).put("baseline_case", pair.baseline.id).put("candidate_case", pair.candidate.id)
+            val blockEpoch = observations.map { it.thermalEpoch }.distinct().singleOrNull()
+            val completedUnit = ledger.recordBlock(pairKey, round, complete, blockEpoch)
+            val a = orders.zip(observations).filter { it.first.startsWith("A") }.map { it.second.elapsedNs }
+            val b = orders.zip(observations).filter { it.first.startsWith("B") }.map { it.second.elapsedNs }
+            record(session, "paired_block", JSONObject().put("pair", pairKey).put("protocol_version", BenchmarkProtocol.VERSION)
+                .put("round", round).put("block", 0).put("counterbalanced_unit", round / 2)
+                .put("block_order", BenchmarkSchedule.blockOrderName(round)).put("chronological_order", JSONArray(orders))
+                .put("thermal_epoch", blockEpoch ?: JSONObject.NULL)
+                .put("complete_balanced_block", complete).put("baseline_case", pair.baseline.id).put("candidate_case", pair.candidate.id)
                 .put("repeats", batchRepeats).put("crossed_thermal_pause", observations.map { it.thermalEpoch }.distinct().size > 1)
                 .put("comparison_kind", if (pair.baseline.id == pair.candidate.id) "repeatability_control" else "same_build_reference_comparison")
                 .put("baseline_samples_ns", JSONArray(a.map { it ?: JSONObject.NULL })).put("candidate_samples_ns", JSONArray(b.map { it ?: JSONObject.NULL }))
                 .put("candidate_change_percent", if (complete)
                     (kotlin.math.sqrt(b[0]!!.toDouble() / a[0]!! * (b[1]!!.toDouble() / a[1]!!)) - 1.0) * 100.0 else JSONObject.NULL))
+            if (completedUnit != null) {
+                record(session, "counterbalanced_unit", JSONObject().put("pair", pairKey)
+                    .put("protocol_version", BenchmarkProtocol.VERSION).put("unit", completedUnit.unit)
+                    .put("rounds", JSONArray(listOf(round - 1, round))).put("block_orders", JSONArray(listOf("ABBA", "BAAB")))
+                    .put("complete_counterbalanced_unit", completedUnit.complete).put("reason", completedUnit.reason)
+                    .put("thermal_epoch", completedUnit.thermalEpoch ?: JSONObject.NULL))
+            }
             if (observations.any { it.status != "PASS" }) {
                 retire(pairKey, if (observations.any { it.status == "FAIL" }) "measured_correctness_or_protocol_failure" else "measured_case_unavailable")
             } else if (observations.size == 4 && observations.any { it.elapsedNs == null || it.elapsedNs <= 0 }) {
@@ -357,6 +379,9 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             val role = if (order.endsWith("A") || order.startsWith("A")) "A" else "B"
             val case = if (role == "A") pair.baseline else pair.candidate
             val warmup = phase != "measurement"
+            val unit: Any = if (warmup) JSONObject.NULL else round / 2
+            val blockOrder: Any = if (warmup) JSONObject.NULL else BenchmarkSchedule.blockOrderName(round)
+            val position: Any = if (warmup) JSONObject.NULL else BenchmarkSchedule.blockOrder(round).indexOf(order)
             val before = probe.cachedSample()
             if (options.performanceHints && hint == null && case.backend == "cpu") hint = createHint()
             if (case.backend != "cpu") { runCatching { hint?.close() }; hint = null }
@@ -365,6 +390,8 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             record(session, "sample_start", JSONObject().put("sample_id", sampleId).put("pair", pairKey).put("case_id", case.id)
                 .put("backend", case.backend).put("fixture_id", pair.fixture).put("steps", pair.steps)
                 .put("placement", placement).put("repeats", repeats).put("round", round).put("block", block)
+                .put("protocol_version", BenchmarkProtocol.VERSION).put("counterbalanced_unit", unit)
+                .put("block_order", blockOrder).put("position_in_block", position).put("thermal_epoch", thermalEpoch)
                 .put("phase", phase).put("warmup", warmup).put("order", order).put("thread_tid", tid).put("native_invocation_planned", true))
             val wrapperStart = SystemClock.elapsedRealtimeNanos()
             val cpuStart = runCatching { Debug.threadCpuTimeNanos() }.getOrNull()
@@ -392,6 +419,8 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             record(session, "sample", JSONObject().put("sample_id", sampleId).put("pair", pairKey).put("case_id", case.id).put("backend", case.backend)
                 .put("fixture_id", pair.fixture).put("steps", pair.steps).put("repeats", repeats).put("effective_repeats", effectiveRepeats ?: JSONObject.NULL)
                 .put("round", round).put("block", block).put("order", order).put("role", role).put("phase", phase).put("warmup", warmup).put("placement", placement)
+                .put("protocol_version", BenchmarkProtocol.VERSION).put("counterbalanced_unit", unit)
+                .put("block_order", blockOrder).put("position_in_block", position).put("thermal_epoch", thermalEpoch)
                 .put("status", status).put("elapsed_ns", elapsed ?: JSONObject.NULL).put("jni_wrapper_elapsed_ns", wrapperNs)
                 .put("thread_cpu_elapsed_ns", threadCpuNs ?: JSONObject.NULL)
                 .put("thread_cpu_scope", "dedicated_calling_thread; JNI_wrapper_and_JSON_handling_including_native_setup_oracle_checksum; excludes_internal_worker_threads_and_GPU")
@@ -405,23 +434,19 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
         }
 
         private suspend fun awaitThermalRecovery(pairKey: String) {
-            val pauseStarted = SystemClock.elapsedRealtimeNanos()
-            var didPause = false
-            while (thermal.update(probe.thermalStatus(), SystemClock.elapsedRealtimeNanos())) {
-                if (!didPause) {
-                    didPause = true
-                    runCatching { hint?.close() }; hint = null
-                    record(session, "thermal_pause", JSONObject().put("thermal_status", probe.thermalStatus()).put("pair", pairKey))
+            if (!thermal.update(probe.thermalStatus(), SystemClock.elapsedRealtimeNanos())) return
+            thermalAccounting.observePause(SystemClock::elapsedRealtimeNanos, onEnd = { duration ->
+                record(session, "thermal_pause_end", JSONObject().put("duration_ns", duration)
+                    .put("resumed", !thermal.paused).put("thermal_epoch", thermalEpoch))
+            }) {
+                runCatching { hint?.close() }; hint = null
+                record(session, "thermal_pause", JSONObject().put("thermal_status", probe.thermalStatus()).put("pair", pairKey))
+                while (thermal.paused) {
+                    publish("Cooling down", "Heat reached the pause threshold. Resume after 30 seconds at light or no thermal pressure.")
+                    if (expired()) break
+                    delay(1000)
+                    thermal.update(probe.thermalStatus(), SystemClock.elapsedRealtimeNanos())
                 }
-                publish("Cooling down", "Heat reached the pause threshold. Resume after 30 seconds at light or no thermal pressure.")
-                if (expired()) break
-                delay(1000)
-            }
-            if (didPause) {
-                thermalEpoch++
-                val duration = SystemClock.elapsedRealtimeNanos() - pauseStarted
-                pausedNs += duration
-                record(session, "thermal_pause_end", JSONObject().put("duration_ns", duration).put("resumed", !thermal.paused))
             }
         }
 
@@ -431,8 +456,10 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
             val finalNs = SystemClock.elapsedRealtimeNanos()
             val activeNs = (finalNs - start - pausedNs).coerceAtLeast(0)
             val blocks = ledger.completedSnapshot()
+            val units = ledger.completedUnitsSnapshot()
             val retired = ledger.retiredSnapshot()
             val belowMinimum = blocks.filter { (pair, count) -> pair !in retired && count < plan.minimumCompleteBlocks }
+            val belowMinimumUnits = units.filter { (pair, count) -> pair !in retired && count < plan.minimumCompleteCounterbalancedUnits }
             val durationMet = activeNs >= plan.minimumObservationSeconds * 1_000_000_000L
             val summaries = JSONArray(values.mapNotNull { (key, times) ->
                 TimingSummary.from(times)?.let {
@@ -441,14 +468,20 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
                 }
             })
             val summary = JSONObject().put("schema_version", 1).put("session_id", session.name).put("status", outcome)
-                .put("protocol_version", 2).put("comparisons_planned", progress.pairsPlanned)
+                .put("protocol_version", BenchmarkProtocol.VERSION).put("comparisons_planned", progress.pairsPlanned)
                 .put("comparisons_visited", ledger.visitedPairs).put("comparisons_visited_last_round", lastRoundVisited)
                 .put("rounds_visited", roundsVisited).put("measured_blocks_attempted", ledger.attemptedBlocks)
-                .put("complete_abba_blocks_by_pair", JSONObject(blocks as Map<*, *>))
+                .put("complete_blocks_by_pair", JSONObject(blocks as Map<*, *>))
+                .put("complete_counterbalanced_units_by_pair", JSONObject(units as Map<*, *>))
+                .put("unmatched_counterbalanced_units_by_pair", JSONObject(ledger.unmatchedUnitsSnapshot() as Map<*, *>))
                 .put("retired_pairs", JSONObject(retired as Map<*, *>))
                 .put("active_pairs_below_minimum_blocks", JSONObject(belowMinimum as Map<*, *>))
+                .put("active_pairs_below_minimum_counterbalanced_units", JSONObject(belowMinimumUnits as Map<*, *>))
                 .put("minimum_complete_blocks_per_pair", plan.minimumCompleteBlocks)
+                .put("minimum_complete_counterbalanced_units_per_pair", plan.minimumCompleteCounterbalancedUnits)
                 .put("minimum_block_target_met", ledger.activePairCount > 0 && belowMinimum.isEmpty())
+                .put("minimum_counterbalanced_unit_target_met", ledger.activePairCount > 0 && belowMinimumUnits.isEmpty())
+                .put("all_active_counterbalanced_units_closed", !ledger.hasUnmatchedActiveUnits())
                 .put("active_observation_ns", activeNs).put("minimum_observation_seconds", plan.minimumObservationSeconds)
                 .put("duration_target_met", durationMet)
                 .put("reason", reason).put("elapsed_ns", finalNs - start).put("thermal_paused_ns", pausedNs)
@@ -456,13 +489,15 @@ class BenchmarkRunner(private val context: Context, private val store: Benchmark
                 .put("count_scope", "counts=measured_samples; warmup_and_calibration_counts=retained_premeasurement_samples; any_failure_vetoes_a_claim")
                 .put("timings", summaries)
                 .put("journal_writer", journalWriterSnapshot(store.journalIoStatistics(session)))
-                .put("interpretation", "Complete blocks are not automatically clean independent samples; require offline environmental qualification and repeated sessions. Native repeats are subsamples, never independent ABBA blocks. PASS is case-local correctness, not speedup or hardware execution evidence.")
+                .put("interpretation", "Complete counterbalanced units are not automatically clean independent samples; require offline environmental qualification and repeated sessions. Unmatched blocks are retained but never count as completed units. Native repeats are subsamples. PASS is case-local correctness, not speedup or hardware execution evidence.")
             withContext(Dispatchers.IO) {
                 store.writeAtomic(session, "summary.json", summary.toString(2))
                 manifest.put("status", outcome).put("reason", reason).put("finished_utc", Instant.now().toString())
                     .put("finished_monotonic_ns", finalNs).put("thermal_paused_ns", pausedNs)
                     .put("duration_target_met", durationMet).put("active_observation_ns", activeNs)
                     .put("minimum_block_target_met", ledger.activePairCount > 0 && belowMinimum.isEmpty())
+                    .put("minimum_counterbalanced_unit_target_met", ledger.activePairCount > 0 && belowMinimumUnits.isEmpty())
+                    .put("all_active_counterbalanced_units_closed", !ledger.hasUnmatchedActiveUnits())
                     .put("measured_blocks_attempted", ledger.attemptedBlocks).put("rounds_visited", roundsVisited)
                 store.writeAtomic(session, "manifest.json", manifest.toString(2))
             }
