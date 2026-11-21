@@ -45,6 +45,8 @@ mod benchmark_jni;
 #[cfg(any(target_os = "android", test))]
 mod flight;
 #[cfg(any(target_os = "android", test))]
+mod docking;
+#[cfg(any(target_os = "android", test))]
 mod probe_authoring;
 pub use persistence::{sl_v2_session_export_save, sl_v2_session_import_save, SlSaveWriteResult};
 
@@ -2006,7 +2008,14 @@ fn decode_vector3d(value: SlVector3d) -> Vector3d {
 }
 
 fn runtime_error_to_status(error: RuntimeError) -> SlResult {
+    use solarlab_physics::science::ScientificError;
     match error {
+        RuntimeError::ScientificFailure(
+            ScientificError::WorkLimit
+            | ScientificError::StepTooSmall
+            | ScientificError::ContactResolutionLimit
+            | ScientificError::ContactMotionEnvelope,
+        ) => status(SlStatusCode::WorkLimit),
         RuntimeError::DuplicateBody(_)
         | RuntimeError::UnknownBody(_)
         | RuntimeError::UnknownScenario(_)
@@ -2014,6 +2023,7 @@ fn runtime_error_to_status(error: RuntimeError) -> SlResult {
         | RuntimeError::InvalidPlaybackRate(_)
         | RuntimeError::InvalidBodyProperties | RuntimeError::BodyEditRequiresPause
         | RuntimeError::InvalidFlightState
+        | RuntimeError::ScientificFailure(_)
         | RuntimeError::UnknownCheckpoint(_)
         | RuntimeError::DuplicateCheckpoint(_)
         | RuntimeError::DuplicateBranch(_)
@@ -2242,6 +2252,7 @@ fn jni_next_ordinal(ordinal: u64) -> i64 {
 // release call.
 mod android_jni {
     mod flight;
+    mod docking;
     mod persistence;
     mod probe_authoring;
     use super::{
@@ -3281,6 +3292,29 @@ mod tests {
         SlVulkanTracerInstance, SlVulkanTrailSpan, SL_CELESTIAL_APPEARANCE_HAS_ATMOSPHERE,
         SL_V2_ID_CAPACITY, SOLARLAB_V2_ABI_VERSION,
     };
+
+    #[test]
+    fn scientific_resource_limits_keep_distinct_boundary_status() {
+        use solarlab_physics::science::ScientificError;
+        use solarlab_runtime::RuntimeError;
+        for error in [
+            ScientificError::WorkLimit,
+            ScientificError::StepTooSmall,
+            ScientificError::ContactResolutionLimit,
+            ScientificError::ContactMotionEnvelope,
+        ] {
+            assert_eq!(
+                super::runtime_error_to_status(RuntimeError::ScientificFailure(error)).code,
+                SlStatusCode::WorkLimit,
+            );
+        }
+        assert_eq!(
+            super::runtime_error_to_status(RuntimeError::ScientificFailure(
+                ScientificError::InsideHarmonicReferenceRadius,
+            )).code,
+            SlStatusCode::InvalidArgument,
+        );
+    }
 
     #[test]
     fn avx2_execution_and_small_workload_fallback_have_stable_boundary_codes() {

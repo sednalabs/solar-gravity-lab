@@ -5,7 +5,8 @@ const val REFERENCE_SPACECRAFT_ID = "flight.odyssey"
 
 enum class FlightAssist(val nativeCode: Int, val label: String) {
     Manual(0, "Manual"), Hold(1, "Stabilise"), Prograde(2, "Prograde"),
-    Retrograde(3, "Retrograde"), Normal(4, "Normal"), AntiNormal(5, "Anti-normal");
+    Retrograde(3, "Retrograde"), Normal(4, "Normal"), AntiNormal(5, "Anti-normal"),
+    RadialOut(6, "Radial out"), RadialIn(7, "Radial in");
 
     companion object {
         fun fromNative(code: Int): FlightAssist = entries.firstOrNull { it.nativeCode == code }
@@ -70,10 +71,13 @@ data class FlightState(
     val hasBoundOrbit: Boolean,
     val control: FlightControl,
     val actualMainAccelerationMps2: Double,
+    val navigation: OrbitGuidance? = null,
 )
 
 internal fun flightStateFromNative(values: DoubleArray): FlightState {
-    require(values.size == 44 && values[0] == 1.0) { "Unsupported spacecraft telemetry schema" }
+    require((values.size == 44 && values[0] == 1.0) || (values.size == 48 && values[0] == 2.0)) {
+        "Unsupported spacecraft telemetry schema"
+    }
     val required = listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) + (17..26) + (28..43)
     require(required.all { values[it].isFinite() }) { "Non-finite spacecraft telemetry" }
     require(values[3] > 0.0 && values[4] >= 0.0 && values[5] > 0.0 && values[7] in 0.0..1.0) {
@@ -99,5 +103,6 @@ internal fun flightStateFromNative(values: DoubleArray): FlightState {
         hostRadiusM = values[34], hasValidOrbit = validOrbit, hasBoundOrbit = boundOrbit,
         control = FlightControl(values[7], values[37], values[38], values[39], values[40], values[41], values[42], assist),
         actualMainAccelerationMps2 = values[43],
+        navigation = orbitGuidanceFromNative(values),
     )
 }

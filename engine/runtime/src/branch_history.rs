@@ -19,11 +19,14 @@ impl WorldRuntime {
 
     pub(super) fn command_kind(&self, command: &WorldCommand) -> String {
         match command {
+            WorldCommand::SetScientificSettings { .. } => "physics.set_scientific_settings",
             WorldCommand::SeedCanonicalSolarSystem => "catalog.seed_canonical_solar_system",
             WorldCommand::SpawnSpacecraft { .. } => "spacecraft.spawn",
             WorldCommand::SetFlightControl { .. } => "spacecraft.control",
             WorldCommand::StartGuidedBurn { .. } => "spacecraft.guided_burn",
             WorldCommand::SetRendezvousGuidance { .. } => "spacecraft.rendezvous_guidance",
+            WorldCommand::SetDockingGuidance { .. } => "spacecraft.docking_guidance",
+            WorldCommand::UndockSpacecraft { .. } => "spacecraft.undock",
             WorldCommand::SpawnBody { .. } => "body.spawn",
             WorldCommand::RemoveBody { .. } => "body.remove",
             WorldCommand::SetBodyKinematics { .. } => "body.set_kinematics",
@@ -44,11 +47,14 @@ impl WorldRuntime {
 
     pub(super) fn command_summary(&self, command: &WorldCommand) -> String {
         match command {
+            WorldCommand::SetScientificSettings { settings } => serde_json::to_string(settings).expect("validated finite scientific settings"),
             WorldCommand::SeedCanonicalSolarSystem => "seed canonical startup solar system".into(),
             WorldCommand::SpawnSpacecraft { body, .. } => format!("spawn spacecraft {}",body.body_id.0),
             WorldCommand::SetFlightControl { body_id, control } => format!("flight {} throttle={} translation={:?} rotation={:?} assist={:?}",body_id.0,control.throttle,control.translation_body,control.rotation_body,control.attitude_mode),
             WorldCommand::StartGuidedBurn { body_id, full_throttle_seconds } => format!("guided prograde burn {} duration={}s", body_id.0, full_throttle_seconds),
             WorldCommand::SetRendezvousGuidance { body_id, mode } => format!("rendezvous guidance {} mode={mode:?}", body_id.0),
+            WorldCommand::SetDockingGuidance { body_id, mode } => format!("docking guidance {} mode={mode:?}", body_id.0),
+            WorldCommand::UndockSpacecraft { body_id } => format!("release docking constraint {}", body_id.0),
             WorldCommand::SpawnBody { body } => format!("spawn {}", body.body_id.0),
             WorldCommand::RemoveBody { body_id } => format!("remove {}", body_id.0),
             WorldCommand::SetBodyProperties { body_id, mass_kg, source_mass_kg, .. } =>

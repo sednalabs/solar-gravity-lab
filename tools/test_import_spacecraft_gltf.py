@@ -24,7 +24,7 @@ class SpacecraftAssetTests(unittest.TestCase):
     def test_original_asset_import_and_deterministic_header(self):
         with tempfile.TemporaryDirectory() as directory:
             target=Path(directory)/'mesh.h'
-            self.assertEqual(module.write_header(ASSET,target,asset_root=ROOT,output_root=directory),5784)
+            self.assertEqual(module.write_header(ASSET,target,asset_root=ROOT,output_root=directory),7428)
             self.assertEqual(target.read_bytes(),(ROOT/'render/android-vulkan/src/main/cpp/ReferenceSpacecraftMesh.h').read_bytes())
 
     def test_hierarchy_translation_applies_to_all_meshes(self):
@@ -37,7 +37,7 @@ class SpacecraftAssetTests(unittest.TestCase):
     def test_station_uses_shared_importer_with_distinct_native_symbols(self):
         with tempfile.TemporaryDirectory() as directory:
             target=Path(directory)/'station.h'
-            self.assertEqual(module.write_header(STATION,target,'RelayStation',asset_root=ROOT,output_root=directory),15480)
+            self.assertEqual(module.write_header(STATION,target,'RelayStation',asset_root=ROOT,output_root=directory),17556)
             self.assertEqual(target.read_bytes(),(ROOT/'render/android-vulkan/src/main/cpp/RelayStationMesh.h').read_bytes())
             self.assertIn('kRelayStationMesh',target.read_text())
             self.assertNotIn('kReferenceMesh',target.read_text())
@@ -139,7 +139,7 @@ class SpacecraftAssetTests(unittest.TestCase):
                 with self.subTest(output=target),self.assertRaisesRegex(ValueError,'output escapes'):
                     module.write_header(source,target,asset_root=assets,output_root=outputs)
             self.assertEqual(untouched.read_text(),'fixture')
-            self.assertEqual(module.write_header('mesh.gltf','mesh.h',asset_root=assets,output_root=outputs),5784)
+            self.assertEqual(module.write_header('mesh.gltf','mesh.h',asset_root=assets,output_root=outputs),7428)
             self.assertEqual((outputs/'mesh.h').read_bytes(),(ROOT/'render/android-vulkan/src/main/cpp/ReferenceSpacecraftMesh.h').read_bytes())
 
     def test_cli_explicit_roots_preserve_offline_workflow(self):
@@ -150,7 +150,7 @@ class SpacecraftAssetTests(unittest.TestCase):
             completed=subprocess.run([sys.executable,str(ROOT/'tools/import_spacecraft_gltf.py'),
                                       'mesh.gltf','mesh.h','--asset-root',str(assets),
                                       '--output-root',str(outputs)],cwd=ROOT,capture_output=True,text=True,check=True)
-            self.assertIn('Imported 5784 triangle vertices',completed.stdout)
+            self.assertIn('Imported 7428 triangle vertices',completed.stdout)
             self.assertEqual((outputs/'mesh.h').read_bytes(),(ROOT/'render/android-vulkan/src/main/cpp/ReferenceSpacecraftMesh.h').read_bytes())
 
 if __name__=='__main__':unittest.main()

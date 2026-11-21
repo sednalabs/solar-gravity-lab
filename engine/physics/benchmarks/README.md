@@ -1,5 +1,12 @@
 # Authoritative CPU throughput
 
+For integration-method accuracy, J2 model limits, Principia references and the
+independent DOP853 suite, see [scientific flight dynamics](../../../docs/scientific-dynamics.md).
+Run `cargo run -p solarlab-physics --example scientific_comparison` for sampled
+trajectory errors and force-evaluation counts; `scientific-comparison-x64.csv`
+records the initial local result. It is an accuracy comparison, not a wall-clock
+or Galaxy performance benchmark.
+
 Run from the repository root:
 
 ```sh

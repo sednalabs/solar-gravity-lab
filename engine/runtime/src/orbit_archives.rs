@@ -29,7 +29,7 @@ pub(super) fn build_orbit_archives(
         ));
     }
     if query.include_prediction {
-        archives.extend(build_prediction_archives(
+        archives.extend(build_prediction_archives_with_settings(
             &active.world.bodies,
             active.world.epoch_seconds,
             &selected_body_ids,
@@ -37,6 +37,7 @@ pub(super) fn build_orbit_archives(
             query.prediction_sample_count,
             physics_policy,
             active_cpu_features,
+            &active.world.scientific_settings,
         ));
     }
 
@@ -252,7 +253,7 @@ pub(super) fn next_epoch(epoch_seconds: f64, delta_seconds: f64) -> Option<f64> 
     (epoch_seconds.is_finite() && next.is_finite() && next > epoch_seconds).then_some(next)
 }
 
-pub(super) fn build_prediction_archives(
+pub(super) fn build_prediction_archives_with_settings(
     bodies: &[BodyState],
     starting_epoch_seconds: f64,
     body_ids: &[BodyId],
@@ -260,6 +261,7 @@ pub(super) fn build_prediction_archives(
     prediction_sample_count: usize,
     physics_policy: &PhysicsPolicy,
     active_cpu_features: &[String],
+    settings: &ScientificSettings,
 ) -> Vec<OrbitArchive> {
     if checked_substep_count(physics_policy, prediction_step_seconds).is_none()
         || prediction_sample_count == 0
@@ -281,12 +283,13 @@ pub(super) fn build_prediction_archives(
         let Some(next_epoch_seconds) = next_epoch(epoch_seconds, prediction_step_seconds) else {
             return Vec::new();
         };
-        let _ = advance_authoritative_with_features(
-            physics_policy,
+        if solarlab_physics::science::advance_authoritative_scientific(
+            physics_policy, settings,
+            &bodies.iter().map(|b| b.body_id.clone()).collect::<Vec<_>>(),
             &mut solver_bodies,
             prediction_step_seconds,
             active_cpu_features,
-        );
+        ).is_err() { break; }
         apply_solver_state_to_world_bodies(&mut projected_bodies, &solver_bodies);
         epoch_seconds = next_epoch_seconds;
 
@@ -394,4 +397,9 @@ mod review_regression_tests {
             bodies.len()
         );
     }
+}
+
+#[cfg(test)]
+pub(super) fn build_prediction_archives(bodies: &[BodyState], epoch: f64, ids: &[BodyId], step: f64, count: usize, policy: &PhysicsPolicy, features: &[String]) -> Vec<OrbitArchive> {
+    build_prediction_archives_with_settings(bodies, epoch, ids, step, count, policy, features, &ScientificSettings::default())
 }

@@ -1,6 +1,5 @@
 #include "SolarLabVulkanRenderer.h"
-#include "ReferenceSpacecraftMesh.h"
-#include "RelayStationMesh.h"
+#include "SpacecraftAssetGeometry.h"
 #include "SpacecraftPresentation.h"
 #include "SolarLabPresentation.h"
 
@@ -2170,18 +2169,22 @@ solarlab::rendering::SceneCommandState SolarLabVulkanRenderer::SceneCommandState
             .tileCounterCount = stream.tileCounterCount,
         };
     };
-    return {
+    solarlab::rendering::SceneCommandState state{
         .flightPerspective = flightPerspective_,
         .draws = {draw(sceneGpuStreams_.authoritative), draw(sceneGpuStreams_.tracerNear),
             draw(sceneGpuStreams_.tracerMedium), draw(sceneGpuStreams_.tracerFar), draw(sceneGpuStreams_.trails),
-            draw(sceneGpuStreams_.spacecraft), {sceneGpuStreams_.referenceMesh.allocationGeneration, 0},
-            {sceneGpuStreams_.referenceExhaust.allocationGeneration, 0},
-            {sceneGpuStreams_.relayStationMesh.allocationGeneration, 0}},
-        .meshInstanceCounts = {sceneGpuStreams_.meshRanges[0].instanceCount, sceneGpuStreams_.meshRanges[1].instanceCount},
+            draw(sceneGpuStreams_.spacecraft)},
         .medium = compute(sceneGpuStreams_.tracerMediumCompute),
         .far = compute(sceneGpuStreams_.tracerFarCompute),
         .trailStrips = sceneGpuStreams_.trailStripVertexCounts,
     };
+    for (size_t i = 0; i < sceneGpuStreams_.meshGeometry.size(); ++i) {
+        const auto& geometry = sceneGpuStreams_.meshGeometry[i];
+        state.draws[6 + 2 * i] = {geometry.solid.allocationGeneration, 0};
+        state.draws[7 + 2 * i] = {geometry.exhaust.allocationGeneration, 0};
+        state.meshInstanceCounts[i] = sceneGpuStreams_.meshRanges[i].instanceCount;
+    }
+    return state;
 }
 
 // Repackages the latest runtime scene into GPU vertex, indirect, and compaction buffers while the
@@ -2538,22 +2541,20 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
 
     // Immutable geometry uploads once per device lifetime. Scene changes update
     // only the 68-byte pose per ship, under the shared graphics-fence policy.
-    if (meshPlan.ranges[0].instanceCount > 0) {
-        if (!sceneGpuStreams_.referenceMeshUploaded) {
-            if (!uploadTracerStream(solarlab::spacecraft::kReferenceMesh.data(), sizeof(solarlab::spacecraft::kReferenceMesh),
-                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, "reference-spacecraft", sceneGpuStreams_.referenceMesh)) return false;
-            sceneGpuStreams_.referenceMeshUploaded = true;
+    for (size_t i = 0; i < solarlab::spacecraft::kRegisteredMeshes.size(); ++i) {
+        if (meshPlan.ranges[i].instanceCount == 0) continue;
+        const auto& asset = solarlab::spacecraft::kRegisteredMeshes[i];
+        auto& geometry = sceneGpuStreams_.meshGeometry[i];
+        if (!geometry.solidUploaded) {
+            if (!uploadTracerStream(asset.solid.data(), asset.solid.size_bytes(),
+                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, asset.assetId, geometry.solid)) return false;
+            geometry.solidUploaded = true;
         }
-        if (!sceneGpuStreams_.referenceExhaustUploaded) {
-            if (!uploadTracerStream(solarlab::spacecraft::kReferenceExhaust.data(), sizeof(solarlab::spacecraft::kReferenceExhaust),
-                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, "reference-exhaust", sceneGpuStreams_.referenceExhaust)) return false;
-            sceneGpuStreams_.referenceExhaustUploaded = true;
+        if (!geometry.exhaustUploaded) {
+            if (!uploadTracerStream(asset.exhaust.data(), asset.exhaust.size_bytes(),
+                    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, asset.assetId, geometry.exhaust)) return false;
+            geometry.exhaustUploaded = true;
         }
-    }
-    if (meshPlan.ranges[1].instanceCount > 0 && !sceneGpuStreams_.relayStationMeshUploaded) {
-        if (!uploadTracerStream(solarlab::spacecraft::kRelayStationMesh.data(), sizeof(solarlab::spacecraft::kRelayStationMesh),
-                VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, "relay-station", sceneGpuStreams_.relayStationMesh)) return false;
-        sceneGpuStreams_.relayStationMeshUploaded = true;
     }
     if (!uploadStream(spacecraftInstances.data(), ByteSize(spacecraftInstances), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             "spacecraft-instances", sceneGpuStreams_.spacecraft.vertexBuffer)) return false;
@@ -2725,8 +2726,7 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
     sceneGpuStreams_.authoritativeInfluenceCount = authoritativeCount;
     sceneGpuStreams_.totalBytes =
         sceneGpuStreams_.authoritativeInfluenceBuffer.sizeBytes +
-        sceneGpuStreams_.spacecraft.vertexBuffer.sizeBytes + sceneGpuStreams_.referenceMesh.sizeBytes +
-        sceneGpuStreams_.referenceExhaust.sizeBytes + sceneGpuStreams_.relayStationMesh.sizeBytes +
+        sceneGpuStreams_.spacecraft.vertexBuffer.sizeBytes +
         sceneGpuStreams_.authoritative.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerNear.vertexBuffer.sizeBytes +
         sceneGpuStreams_.tracerMedium.vertexBuffer.sizeBytes +
@@ -2742,6 +2742,9 @@ bool SolarLabVulkanRenderer::UploadSceneGpuStreamsLocked() {
         sceneGpuStreams_.tracerFarCompute.indirectReadbackBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.tileCounterBuffer.sizeBytes +
         sceneGpuStreams_.tracerFarCompute.tileCounterReadbackBuffer.sizeBytes;
+    for (const auto& geometry : sceneGpuStreams_.meshGeometry) {
+        sceneGpuStreams_.totalBytes += geometry.solid.sizeBytes + geometry.exhaust.sizeBytes;
+    }
 
     uploadStats_.sourceRevision = sceneBuffers_.sourceRevision;
     uploadStats_.bytesUploaded = cpuUploadBytes_ - uploadBytesBefore;
@@ -3512,12 +3515,12 @@ bool SolarLabVulkanRenderer::RecordSceneBindingsLocked(VkCommandBuffer commandBu
             vkCmdBindVertexBuffers(commandBuffer, 0, 2, buffers, offsets);
             vkCmdDraw(commandBuffer, count, range.instanceCount, 0, range.firstInstance);
         };
-        drawMesh(spacecraftPipeline_, sceneGpuStreams_.referenceMesh,
-            static_cast<uint32_t>(solarlab::spacecraft::kReferenceMesh.size()), sceneGpuStreams_.meshRanges[0]);
-        drawMesh(spacecraftPipeline_, sceneGpuStreams_.relayStationMesh,
-            static_cast<uint32_t>(solarlab::spacecraft::kRelayStationMesh.size()), sceneGpuStreams_.meshRanges[1]);
-        drawMesh(spacecraftExhaustPipeline_, sceneGpuStreams_.referenceExhaust,
-            static_cast<uint32_t>(solarlab::spacecraft::kReferenceExhaust.size()), sceneGpuStreams_.meshRanges[0]);
+        for (size_t i = 0; i < solarlab::spacecraft::kRegisteredMeshes.size(); ++i) {
+            const auto& asset = solarlab::spacecraft::kRegisteredMeshes[i];
+            const auto& geometry = sceneGpuStreams_.meshGeometry[i];
+            drawMesh(spacecraftPipeline_, geometry.solid, static_cast<uint32_t>(asset.solid.size()), sceneGpuStreams_.meshRanges[i]);
+            drawMesh(spacecraftExhaustPipeline_, geometry.exhaust, static_cast<uint32_t>(asset.exhaust.size()), sceneGpuStreams_.meshRanges[i]);
+        }
     }
 
 
@@ -3546,9 +3549,10 @@ void SolarLabVulkanRenderer::DestroySceneGpuStreams() {
     DestroyGpuBuffer(sceneGpuStreams_.authoritativeInfluenceBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.authoritative.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.spacecraft.vertexBuffer);
-    DestroyGpuBuffer(sceneGpuStreams_.referenceMesh);
-    DestroyGpuBuffer(sceneGpuStreams_.referenceExhaust);
-    DestroyGpuBuffer(sceneGpuStreams_.relayStationMesh);
+    for (auto& geometry : sceneGpuStreams_.meshGeometry) {
+        DestroyGpuBuffer(geometry.solid);
+        DestroyGpuBuffer(geometry.exhaust);
+    }
     DestroyGpuBuffer(sceneGpuStreams_.tracerNear.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerMedium.vertexBuffer);
     DestroyGpuBuffer(sceneGpuStreams_.tracerFar.vertexBuffer);

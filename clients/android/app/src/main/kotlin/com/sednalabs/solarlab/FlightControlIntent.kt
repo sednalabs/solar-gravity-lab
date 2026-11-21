@@ -3,6 +3,10 @@ package com.sednalabs.solarlab
 import com.sednalabs.solarlab.runtime.FlightAssist
 import com.sednalabs.solarlab.runtime.FlightControl
 
+/** UI prevention complements the native joint's command gate, including late queued input. */
+internal fun flightControlForAttachment(intent: FlightControl, attached: Boolean): FlightControl =
+    if (attached) FlightControl.Cut else intent
+
 /** Native guidance demand must never become an implicit held touchscreen input. */
 internal fun manualFlightControlBase(
     current: FlightControl,
@@ -31,4 +35,24 @@ internal fun flightAxisIntent(current: FlightControl, translation: Boolean, inde
         4 -> current.copy(rotationX = value, assist = FlightAssist.Manual)
         else -> current.copy(rotationZ = value, assist = FlightAssist.Manual)
     }
+}
+
+/** Each touch owns one button, not an entire axis. Opposing touches cancel;
+ * releasing either restores the still-held direction. All six demands are
+ * rebuilt so a mode change, cut or guidance handoff cannot retain stale axes. */
+internal fun flightHeldAxisIntent(
+    current: FlightControl,
+    translation: Boolean,
+    heldButtons: Set<Int>,
+    precision: Boolean,
+): FlightControl {
+    require(heldButtons.all { it in 0..5 }) { "Unknown flight control button" }
+    val gain = if (precision) 0.2 else 1.0
+    fun axis(positive: Int, negative: Int) =
+        ((if (positive in heldButtons) 1.0 else 0.0) - (if (negative in heldButtons) 1.0 else 0.0)) * gain
+    val neutral = current.copy(translationX = 0.0, translationY = 0.0, translationZ = 0.0,
+        rotationX = 0.0, rotationY = 0.0, rotationZ = 0.0)
+    return if (translation) neutral.copy(translationX = axis(3, 0), translationY = axis(1, 4), translationZ = axis(2, 5))
+    else neutral.copy(rotationX = axis(4, 1), rotationY = axis(3, 0), rotationZ = axis(5, 2),
+        assist = if (heldButtons.isEmpty()) current.assist else FlightAssist.Manual)
 }

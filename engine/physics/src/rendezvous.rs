@@ -188,7 +188,7 @@ fn segment_clearance_m(start: Vector3d, end: Vector3d) -> f64 {
     magnitude(add(start, scale(direction, fraction)))
 }
 
-fn axis_rcs_capacities(ship: &SpacecraftState) -> Result<[f64; 6], ()> {
+pub(crate) fn axis_rcs_capacities(ship: &SpacecraftState) -> Result<[f64; 6], ()> {
     let mut capacity = [0.0; 6];
     let mut torque = [Vector3d::default(); 6];
     for engine in &ship.engines {

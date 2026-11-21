@@ -12,6 +12,7 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 solarlab-benchmarks = { path = "../benchmarks" }
+serde_json = { version = "1", features = ["float_roundtrip"] }
 solarlab-data = { path = "../data" }
 solarlab-domain = { path = "../domain" }
 solarlab-hardware = { path = "../hardware" }

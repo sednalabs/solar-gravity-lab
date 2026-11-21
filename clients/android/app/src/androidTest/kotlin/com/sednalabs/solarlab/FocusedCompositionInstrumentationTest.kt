@@ -51,6 +51,7 @@ class FocusedCompositionInstrumentationTest {
     fun jupiter_focus_keeps_jupiter_centered_and_jovian_companion_visible() {
         verifyFocusedComposition(
             focusBodyId = "jupiter",
+            scenarioId = "showcase.jupiter-system",
             companionCandidateIds = listOf("io", "europa", "ganymede", "callisto"),
             screenshotPrefix = "focus-jupiter",
             maxNormalizedCenterDistance = 0.22f,
@@ -64,6 +65,7 @@ class FocusedCompositionInstrumentationTest {
     private fun verifyFocusedComposition(
         focusBodyId: String,
         companionCandidateIds: List<String>,
+        scenarioId: String? = null,
         screenshotPrefix: String,
         maxNormalizedCenterDistance: Float,
         focusViewportConvergenceTimeout: Duration,
@@ -78,6 +80,20 @@ class FocusedCompositionInstrumentationTest {
                 it.renderStatus.readiness == RenderHostReadiness.Ready &&
                     it.renderFrame != null &&
                     it.renderStatus.renderedBodyCount > 0
+            }
+
+            // The app intentionally boots the three-body Earth–Moon laboratory.
+            // Jupiter is absent there. Load the real Jovian scenario before
+            // exercising focus so this test continues checking camera behaviour,
+            // rather than failing an unrelated missing-body precondition.
+            if (scenarioId != null) {
+                runBlocking { facade.loadScenario(scenarioId) }
+                waitForState(facade, timeout = 22.seconds) { state ->
+                    state.snapshot?.scenarioId == scenarioId &&
+                        state.renderFrame?.bodies?.any { body ->
+                            body.bodyId.equals(focusBodyId, ignoreCase = true)
+                        } == true
+                }
             }
 
             runBlocking {

@@ -1,6 +1,7 @@
 package com.sednalabs.solarlab.render.vulkan
 
 import android.content.Context
+import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
 import android.widget.FrameLayout
@@ -42,6 +43,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
     private var cameraScaleChangedListener: ((CameraScaleBand) -> Unit)? = null
     private var flightCameraMode = 0
     private var flightTargetBodyId: String? = null
+    private var flightSceneClearArea: RectF? = null
     private var labMapMode = false
     private var labMapPlane = LabPlane.XY
     private var labViewportChangedListener: ((LabViewportState?) -> Unit)? = null
@@ -129,6 +131,37 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         if (flightTargetBodyId == bodyId) return
         flightTargetBodyId = bodyId
         activeSurface?.setFlightTargetBodyId(bodyId)
+    }
+
+    /** Actual HUD-free bounds in the same window coordinates as Compose layout. */
+    fun setFlightSceneClearAreaInWindow(area: RectF?) {
+        flightSceneClearArea = area?.let(::RectF)
+        publishFlightSafeArea()
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        publishFlightSafeArea()
+    }
+
+    private fun publishFlightSafeArea() {
+        val clear = flightSceneClearArea
+        if (clear == null || width <= 0 || height <= 0) {
+            activeSurface?.setFlightSafeArea(0.0, 0.0)
+            return
+        }
+        val location = IntArray(2)
+        getLocationInWindow(location)
+        val x = location[0].toDouble()
+        val y = location[1].toDouble()
+        val shortAxis = minOf(width, height).toDouble()
+        // The native camera remains at the two physical centres' midpoint. Fit
+        // symmetrically into the smaller clear margin on each side of that point.
+        val halfWidth = minOf(x + width * .5 - maxOf(x, clear.left.toDouble()),
+            minOf(x + width, clear.right.toDouble()) - x - width * .5) * 2 / shortAxis
+        val halfHeight = minOf(y + height * .5 - maxOf(y, clear.top.toDouble()),
+            minOf(y + height, clear.bottom.toDouble()) - y - height * .5) * 2 / shortAxis
+        activeSurface?.setFlightSafeArea(halfWidth.coerceAtLeast(.01), halfHeight.coerceAtLeast(.01))
     }
 
     fun setLabMapMode(enabled: Boolean) {
@@ -324,6 +357,7 @@ class SolarSystemRenderHostView @JvmOverloads constructor(
         activeSurface?.setLabMapMode(labMapMode)
         activeSurface?.setFlightTargetBodyId(flightTargetBodyId)
         activeSurface?.setFlightCamera(flightCameraMode)
+        publishFlightSafeArea()
         activeSurface?.setOnLabViewportChangedListener(labViewportChangedListener)
         addView(
             view,

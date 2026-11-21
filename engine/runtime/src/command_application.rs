@@ -55,16 +55,20 @@ impl WorldRuntime {
         }
 
         self.validate_flight_command(&command)?;
+        let scientific_invariants = self.scientific_command_invariants(&command)?;
         // Flight integration is transactional, including fuel/attitude. Numeric failure
         // leaves command ordinals and the committed world unchanged.
         if let WorldCommand::AdvanceEpoch { delta_seconds } = &command {
-            if staged.is_none() && !self.active_branch().world.spacecraft.is_empty() {
+            if staged.is_none() && !self.active_branch().world.bodies.is_empty() {
                 let world = &self.active_branch().world;
                 let mut bodies = world_bodies_to_solver_state(&world.bodies);
                 let mut ships = spacecraft::bindings(world);
-                let plan = fixed_step_plan_with_source_count(&self.effective_physics_policy(), *delta_seconds, bodies.len(), bodies.iter().filter(|b|b.mass_kg!=0.0).count(), &self.hardware_profile.cpu_features).ok_or(RuntimeError::InvalidFlightState)?;
-                solarlab_physics::spacecraft::advance_spacecraft_steps(&plan, &mut bodies, &mut ships, plan.total_steps).map_err(|()|RuntimeError::InvalidFlightState)?;
-                staged = Some((bodies, plan.report(), ships));
+                let plan = scientific_flight::bind_plan(&self.effective_physics_policy(), &world.scientific_settings, &world.bodies, &world.spacecraft, *delta_seconds, &self.hardware_profile.cpu_features)?;
+                let science = solarlab_physics::spacecraft::advance_spacecraft_steps_checked(&plan, &mut bodies, &mut ships, plan.total_steps).map_err(RuntimeError::ScientificFailure)?;
+                plan.compute_invariants(&bodies).map_err(RuntimeError::ScientificFailure)?;
+                let mut report = plan.report();
+                science.apply_to_solver_report(&mut report);
+                staged = Some((bodies, report, ships));
             }
         }
 
@@ -88,14 +92,22 @@ impl WorldRuntime {
         let is_branch_creation =
             matches!(&command, WorldCommand::CreateBranchFromCheckpoint { .. });
         let refresh_solver_execution_after_command =
-            !matches!(&command, WorldCommand::AdvanceEpoch { .. });
+            matches!(&command, WorldCommand::SetScientificSettings { .. }
+                | WorldCommand::SeedCanonicalSolarSystem | WorldCommand::SpawnSpacecraft { .. }
+                | WorldCommand::SpawnBody { .. } | WorldCommand::RemoveBody { .. }
+                | WorldCommand::SetBodyKinematics { .. } | WorldCommand::SetBodyProperties { .. }
+                | WorldCommand::CreateBranchFromCheckpoint { .. });
         self.next_command_ordinal += 1;
 
         match &command {
+            WorldCommand::SetScientificSettings { settings } => {
+                self.active_branch_mut().world.scientific_settings = settings.clone();
+            }
             WorldCommand::SpawnSpacecraft { body, spacecraft } => {
                 let branch = self.active_branch_mut();
                 branch.world.bodies.push(body.clone());
                 branch.world.spacecraft.push(spacecraft.clone());
+                if spacecraft.docking.is_some() { branch.world.playback.sim_seconds_per_real_second = branch.world.playback.sim_seconds_per_real_second.min(1.0); }
                 branch.world.invariants = compute_world_invariants(&branch.world.bodies);
                 push_trail_sample(&mut branch.world.trail_history_by_body, &body.body_id, branch.world.epoch_seconds, body.position_m);
             }
@@ -104,6 +116,10 @@ impl WorldRuntime {
                 let ship = world.spacecraft.iter_mut().find(|s|s.body_id==*body_id).expect("preflight checked flight identity");
                 ship.control = *control;
                 ship.burn_program = None;
+                if let Some(d) = &mut ship.docking {
+                    d.guidance_mode = DockingGuidanceMode::Manual;
+                    d.capture_armed = false;
+                }
                 if let Some(r) = &mut ship.rendezvous {
                     r.guidance_mode = RendezvousGuidanceMode::Manual;
                     r.status = RendezvousStatus::Manual;
@@ -138,6 +154,25 @@ impl WorldRuntime {
                 if rendezvous.guidance_mode.active() {
                     world.playback.sim_seconds_per_real_second = world.playback.sim_seconds_per_real_second.min(1.0);
                 }
+            }
+            WorldCommand::SetDockingGuidance { body_id, mode } => {
+                let world = &mut self.active_branch_mut().world;
+                let ship = world.spacecraft.iter_mut().find(|s| s.body_id == *body_id).expect("preflight checked docking identity");
+                ship.control = docking_flight::neutral_control();
+                ship.burn_program = None;
+                let d = ship.docking.as_mut().expect("preflight checked docking component");
+                d.guidance_mode = *mode;
+                d.capture_armed = *mode == DockingGuidanceMode::Approach;
+                if d.capture_armed { d.unsafe_contact = false; }
+                world.playback.sim_seconds_per_real_second = world.playback.sim_seconds_per_real_second.min(1.0);
+            }
+            WorldCommand::UndockSpacecraft { body_id } => {
+                let ship = self.active_branch_mut().world.spacecraft.iter_mut().find(|s| s.body_id == *body_id).expect("preflight checked attachment");
+                let d = ship.docking.as_mut().expect("preflight checked docking component");
+                d.attachment = None;
+                d.guidance_mode = DockingGuidanceMode::Manual;
+                d.capture_armed = false;
+                ship.control = docking_flight::neutral_control();
             }
             WorldCommand::SeedCanonicalSolarSystem => {
                 if self.active_branch().world.bodies.is_empty() {
@@ -221,6 +256,14 @@ impl WorldRuntime {
                 branch.world.trail_history_by_body.remove(body_id);
                 branch.world.spacecraft.retain(|s|s.body_id!=*body_id);
                 for ship in &mut branch.world.spacecraft {
+                    if let Some(d) = &mut ship.docking {
+                        if d.target_body_id == *body_id || ship.reference_body_id.as_ref() == Some(body_id) {
+                            d.guidance_mode = DockingGuidanceMode::Manual;
+                            d.capture_armed = false;
+                            if d.target_body_id == *body_id { d.attachment = None; }
+                            ship.control = docking_flight::neutral_control();
+                        }
+                    }
                     if ship.rendezvous.as_ref().is_some_and(|r| r.target_body_id == *body_id)
                         || (ship.rendezvous.is_some() && ship.reference_body_id.as_ref() == Some(body_id)) {
                         let r = ship.rendezvous.as_mut().expect("rendezvous checked");
@@ -290,7 +333,10 @@ impl WorldRuntime {
                 let (solver_bodies, invariants, solver_execution) =
                     if let Some((solver_bodies, report, ships)) = staged {
                         spacecraft::apply_bindings(&mut branch.world, ships);
-                        let invariants = compute_invariants(&solver_bodies);
+                        let mut projected = branch.world.bodies.clone();
+                        apply_solver_state_to_world_bodies(&mut projected, &solver_bodies);
+                        let invariants = scientific_flight::world_invariants(&projected, &branch.world.scientific_settings)
+                            .expect("staged numerical state validated before publication");
                         (solver_bodies, invariants, report)
                     } else {
                         let mut solver_bodies = world_bodies_to_solver_state(&branch.world.bodies);
@@ -416,6 +462,9 @@ impl WorldRuntime {
             }
         }
 
+        if let Some(invariants) = scientific_invariants {
+            self.active_branch_mut().world.invariants = invariants;
+        }
         self.flight_prediction_cache.invalidate_for(&command);
         if refresh_solver_execution_after_command {
             self.refresh_active_solver_execution_report();

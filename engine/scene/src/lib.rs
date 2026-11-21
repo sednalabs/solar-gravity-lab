@@ -67,7 +67,8 @@ impl Default for SceneCelestialAppearance {
 /// +X right, +Y up, +Z forward; xyzw rotates body coordinates into world axes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneSpacecraftAppearance {
-    /// Immutable mesh identity: 1 = Asteria tug, 2 = Relay station.
+    /// Immutable build-time catalog mesh identity. Stable built-ins are
+    /// 1 = Asteria tug and 2 = Relay station; authored assets use catalog IDs.
     /// Physical identity and pose remain on the containing authoritative body.
     pub mesh_kind: u32,
     pub attitude_xyzw: [f64; 4],

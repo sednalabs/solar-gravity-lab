@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Branch, tag, or commit to package
+        description: Optional branch, tag, or SHA that must match the workflow run's commit
         required: false
         type: string
       version_name:
@@ -92,13 +92,14 @@ env:
   ANDROID_CMAKE_PACKAGE: "cmake;3.31.5"
   ANDROID_NDK_VERSION: "27.3.13750724"
   ANDROID_NDK_PACKAGE: "ndk;27.3.13750724"
+  # Shared cache write credentials are available only to trusted main pushes.
   SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
   SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
   SCCACHE_REGION: auto
   SCCACHE_S3_USE_SSL: "true"
   SCCACHE_S3_KEY_PREFIX: ${{ vars.SCCACHE_S3_KEY_PREFIX }}
-  SCCACHE_AWS_ACCESS_KEY_ID: ${{ secrets.SCCACHE_ACCESS_KEY_ID != '' && secrets.SCCACHE_ACCESS_KEY_ID || secrets.R2_CACHE_ACCESS_KEY_ID }}
-  SCCACHE_AWS_SECRET_ACCESS_KEY: ${{ secrets.SCCACHE_SECRET_ACCESS_KEY != '' && secrets.SCCACHE_SECRET_ACCESS_KEY || secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+  SCCACHE_AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.SCCACHE_ACCESS_KEY_ID != '' && secrets.SCCACHE_ACCESS_KEY_ID || secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+  SCCACHE_AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.SCCACHE_SECRET_ACCESS_KEY != '' && secrets.SCCACHE_SECRET_ACCESS_KEY || secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
   SCCACHE_CREDENTIAL_SOURCE: ${{ secrets.SCCACHE_ACCESS_KEY_ID != '' && 'dedicated-sccache-secrets' || 'shared-r2-secrets' }}
 
 jobs:
@@ -120,6 +121,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Verify release note body bounds
         run: python3 .github/scripts/test_render_release_notes.py
@@ -154,11 +157,22 @@ jobs:
             --input-build-variant "${INPUT_BUILD_VARIANT}" \
             --input-publish-release "${INPUT_PUBLISH_RELEASE}" >> "${GITHUB_OUTPUT}"
 
+      - name: Verify requested source matches workflow commit
+        id: source
+        if: ${{ steps.route.outputs.release_requested == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SOURCE: ${{ steps.route.outputs.checkout_ref }}
+          WORKFLOW_SOURCE: ${{ github.sha }}
+        run: python3 .github/scripts/verify_workflow_source.py --ref="$REQUESTED_SOURCE" --workflow-sha="$WORKFLOW_SOURCE"
+
       - name: Summarize release gate
         if: ${{ always() }}
         shell: bash
         env:
           RELEASE_REQUESTED: ${{ steps.route.outputs.release_requested }}
+          ROUTE_OUTCOME: ${{ steps.route.outcome }}
+          SOURCE_OUTCOME: ${{ steps.source.outcome }}
           ROUTE_REASON: ${{ steps.route.outputs.reason }}
           CHECKOUT_REF: ${{ steps.route.outputs.checkout_ref }}
           VERSION_NAME: ${{ steps.route.outputs.version_name }}
@@ -168,9 +182,13 @@ jobs:
           PUBLISH_RELEASE: ${{ steps.route.outputs.publish_release }}
         run: |
           set -euo pipefail
-          if [[ "${RELEASE_REQUESTED:-false}" == "true" ]]; then
+          if [[ "${RELEASE_REQUESTED:-false}" == "true" && "${SOURCE_OUTCOME}" == "success" ]]; then
             decision="package"
             package_job="will run"
+          elif [[ "${ROUTE_OUTCOME}" == "failure" || "${SOURCE_OUTCOME}" == "failure" ]]; then
+            decision="reject"
+            package_job="skipped"
+            ROUTE_REASON="release_request_or_source_verification_failed"
           else
             decision="skip"
             package_job="skipped"
@@ -195,7 +213,7 @@ jobs:
   build-prerelease-apk:
     name: Build internal dev preview APK
     needs: route
-    if: ${{ needs.route.outputs.release_requested == 'true' }}
+    if: ${{ needs.route.result == 'success' && needs.route.outputs.release_requested == 'true' }}
     outputs:
       head_sha: ${{ steps.git_meta.outputs.head_sha }}
       version_name: ${{ steps.meta.outputs.version_name }}
@@ -216,20 +234,21 @@ jobs:
         include:
           - gradle_configuration_cache: ${{ inputs.gradle_configuration_cache != '' && inputs.gradle_configuration_cache || 'disabled' }}
     env:
-      GRADLE_REMOTE_CACHE_URL: ${{ vars.GRADLE_REMOTE_CACHE_URL }}
-      GRADLE_REMOTE_CACHE_USERNAME: ${{ vars.GRADLE_REMOTE_CACHE_USERNAME }}
-      GRADLE_REMOTE_CACHE_PASSWORD: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
-      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_name == 'main' || startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'validation/')) && 'true' || 'false' }}
+      GRADLE_REMOTE_CACHE_URL: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (vars.GRADLE_REMOTE_CACHE_URL) || '' }}
+      GRADLE_REMOTE_CACHE_USERNAME: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (vars.GRADLE_REMOTE_CACHE_USERNAME) || '' }}
+      GRADLE_REMOTE_CACHE_PASSWORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.GRADLE_REMOTE_CACHE_PASSWORD) || '' }}
+      GRADLE_REMOTE_CACHE_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'true' || 'false' }}
       GRADLE_CONFIGURATION_CACHE_MODE: ${{ inputs.gradle_configuration_cache != '' && inputs.gradle_configuration_cache || 'disabled' }}
-      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      GRADLE_CONFIGURATION_CACHE_PERSISTENCE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_CONFIGURATION_CACHE_KEY != '' && 'github-cache-encrypted' || 'job-local-only' }}
+      AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           fetch-tags: true
-          ref: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Initialize prerelease timing
         id: prerelease_timing
@@ -238,12 +257,19 @@ jobs:
           set -euo pipefail
           echo "lane_start_epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve checkout metadata
+      - name: Verify checkout and record build source
         id: git_meta
         shell: bash
+        env:
+          WORKFLOW_SOURCE: ${{ github.sha }}
         run: |
           set -euo pipefail
-          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          head_sha="$(git rev-parse HEAD)"
+          if [[ "$head_sha" != "$WORKFLOW_SOURCE" ]]; then
+            echo "Checkout differs from the workflow source; refusing to build." >&2
+            exit 1
+          fi
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
         with:
@@ -252,10 +278,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
         with:
-          cache-read-only: ${{ github.event_name == 'pull_request' || (github.ref_name != 'main' && !startsWith(github.ref_name, 'release/') && !startsWith(github.ref_name, 'validation/')) }}
+          cache-read-only: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
           cache-cleanup: on-success
           add-job-summary: on-failure
-          cache-encryption-key: ${{ secrets.GRADLE_CONFIGURATION_CACHE_KEY }}
+          cache-encryption-key: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.GRADLE_CONFIGURATION_CACHE_KEY) || '' }}
           gradle-home-cache-excludes: |
             caches/build-cache-1
 
@@ -276,7 +302,7 @@ jobs:
       - name: Restore Android emulator AVD cache
         id: avd-cache
         if: ${{ inputs.emulator_boot_strategy == 'snapshot-cache' }}
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.android/avd/*
@@ -285,7 +311,7 @@ jobs:
 
       - name: Restore Android SDK emulator packages cache
         id: android-sdk-components-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             /usr/local/lib/android/sdk/emulator
@@ -621,10 +647,12 @@ jobs:
 
       - name: Generate build provenance
         shell: bash
+        env:
+          CHECKOUT_REF: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json
+          import json, os
           from datetime import datetime, timezone
           from pathlib import Path
 
@@ -638,7 +666,7 @@ jobs:
               "workflow": "${{ github.workflow }}",
               "run_id": "${{ github.run_id }}",
               "run_attempt": "${{ github.run_attempt }}",
-              "checkout_ref": "${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}",
+              "checkout_ref": os.environ["CHECKOUT_REF"],
               "commit_sha": "${{ steps.git_meta.outputs.head_sha }}",
               "version_name": "${{ steps.meta.outputs.version_name }}",
               "version_code": "${{ steps.meta.outputs.version_code }}",
@@ -704,6 +732,24 @@ jobs:
             cat dist/sccache/prerelease-build.txt
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Save Android emulator AVD cache from trusted main push
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.emulator_boot_strategy == 'snapshot-cache' && steps.avd-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: ${{ steps.avd-cache.outputs.cache-primary-key }}
+
+      - name: Save Android SDK emulator packages cache from trusted main push
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.android-sdk-components-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /usr/local/lib/android/sdk/emulator
+            /usr/local/lib/android/sdk/system-images/android-35/google_apis
+          key: ${{ steps.android-sdk-components-cache.outputs.cache-primary-key }}
+
       - name: Upload prerelease APK artifact
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -733,13 +779,26 @@ jobs:
     if: needs.build-prerelease-apk.result == 'success'
     runs-on: ubuntu-24.04-arm
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_CACHE_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_CACHE_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_ACCESS_KEY_ID) || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && (secrets.R2_CACHE_SECRET_ACCESS_KEY) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          ref: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require proof source to equal packaged commit
+        env:
+          BUILT_SOURCE: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+          WORKFLOW_SOURCE: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$BUILT_SOURCE" != "$WORKFLOW_SOURCE" || "$(git rev-parse HEAD)" != "$BUILT_SOURCE" ]]; then
+            echo "ISA proof source differs from the packaged workflow source." >&2
+            exit 1
+          fi
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
@@ -798,7 +857,76 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require publication source to equal packaged commit
+        env:
+          BUILT_SOURCE: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+          WORKFLOW_SOURCE: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$BUILT_SOURCE" != "$WORKFLOW_SOURCE" || "$(git rev-parse HEAD)" != "$BUILT_SOURCE" ]]; then
+            echo "Publication source differs from the packaged workflow source." >&2
+            exit 1
+          fi
+
+      - name: Resolve desktop proof from the identical source
+        id: desktop_proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SOURCE: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          repo, source = os.environ['GITHUB_REPOSITORY'], os.environ['RELEASE_SOURCE']
+          def api(endpoint):
+              return json.loads(subprocess.check_output(['gh', 'api', f'/repos/{repo}/{endpoint}'], text=True))
+          runs = api(f'actions/workflows/validation-lab.yml/runs?head_sha={source}&status=success&per_page=50')['workflow_runs']
+          for run in runs:
+              if run['head_sha'] != source or run['conclusion'] != 'success':
+                  continue
+              run_id = int(run['id'])
+              name = f'solarlab-desktop-linux-x64-{run_id}'
+              artifacts = api(f'actions/runs/{run_id}/artifacts?per_page=100')['artifacts']
+              if any(a['name'] == name and not a['expired'] and a.get('workflow_run', {}).get('head_sha') == source for a in artifacts):
+                  with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
+                      output.write(f'run_id={run_id}\nartifact_name={name}\n')
+                  break
+          else:
+              raise SystemExit('No successful native desktop journey artifact exists for this exact release source; qualify it before publishing.')
+          PY
+
+      - name: Download the qualified desktop binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ steps.desktop_proof.outputs.artifact_name }}
+          run-id: ${{ steps.desktop_proof.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/qualified-desktop
+
+      - name: Package the source-bound Linux desktop preview
+        shell: bash
+        env:
+          RELEASE_SOURCE: ${{ needs.build-prerelease-apk.outputs.head_sha }}
+          RELEASE_VERSION: ${{ needs.build-prerelease-apk.outputs.version_name }}
+          DESKTOP_VALIDATION_RUN: ${{ steps.desktop_proof.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/package_desktop_preview.py \
+            --input "$RUNNER_TEMP/qualified-desktop" --output dist \
+            --source "$RELEASE_SOURCE" --version "$RELEASE_VERSION" \
+            --validation-run "$DESKTOP_VALIDATION_RUN"
+
       - name: Download packaged artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -866,10 +994,13 @@ jobs:
 
       - name: Generate release provenance
         shell: bash
+        env:
+          CHECKOUT_REF: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
+          RELEASE_NOTES_PATH: ${{ steps.release_artifacts.outputs.release_notes_md }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json
+          import json, os
           from datetime import datetime, timezone
           from pathlib import Path
 
@@ -878,6 +1009,9 @@ jobs:
           sha_candidates = sorted(Path("dist").rglob(f"{artifact_name}.sha256"))
           if not sha_candidates:
               raise SystemExit(f"Missing SHA-256 file for {artifact_name}")
+          desktop = json.loads((Path("dist") / f"desktop-provenance-{safe_version}.json").read_text())
+          if desktop["commit_sha"] != "${{ needs.build-prerelease-apk.outputs.head_sha }}":
+              raise SystemExit("Desktop and Android release sources differ")
           payload = {
               "schema_version": 1,
               "provenance_kind": "github-release",
@@ -887,13 +1021,14 @@ jobs:
               "run_attempt": "${{ github.run_attempt }}",
               "release_tag": "${{ needs.build-prerelease-apk.outputs.tag_name }}",
               "release_target": "${{ needs.build-prerelease-apk.outputs.head_sha }}",
-              "checkout_ref": "${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}",
+              "checkout_ref": os.environ["CHECKOUT_REF"],
               "version_name": "${{ needs.build-prerelease-apk.outputs.version_name }}",
               "version_code": "${{ needs.build-prerelease-apk.outputs.version_code }}",
               "build_variant": "${{ needs.build-prerelease-apk.outputs.build_variant }}",
               "release_channel": "${{ needs.build-prerelease-apk.outputs.release_channel }}",
               "artifact_name": artifact_name,
               "artifact_sha256": sha_candidates[0].read_text(encoding="utf-8").split()[0],
+              "desktop_preview": desktop,
               "launch_smoke_outcome": "${{ needs.build-prerelease-apk.outputs.launch_smoke_outcome }}",
               "arm64_isa_proof": "${{ needs.isa-prerelease-proof.result }}",
               "changelog_baseline_tag": "${{ needs.build-prerelease-apk.outputs.changelog_baseline_tag }}",
@@ -902,6 +1037,21 @@ jobs:
           }
           output = Path("dist") / f"release-provenance-{safe_version}.json"
           output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          notes = Path(os.environ["RELEASE_NOTES_PATH"])
+          notes.write_text(notes.read_text() + (
+              "\n\n## Linux desktop flight preview\n\n"
+              f"Download `{desktop['artifact_name']}` and its `.sha256` file, "
+              "verify the checksum, then extract the archive and run "
+              "`./solarlab-desktop --port 8787`. Open `http://127.0.0.1:8787` "
+              "in a local browser with WebGL 2. The native host embeds the cockpit "
+              "and assets; it does not need a separate Node or Rust installation.\n\n"
+              "This first Linux x64 preview is qualified on Ubuntu 24.04. "
+              "Windows and macOS packages are not included. The archive contains "
+              "the exact binary exercised by the native desktop journey, from "
+              "the same source as this Android build. "
+              f"[Validation run](https://github.com/${{ github.repository }}/actions/runs/{desktop['validation_run_id']}). "
+              "The visual proof uses Chromium software WebGL and does not establish physical GPU performance.\n"
+          ), encoding="utf-8")
           PY
 
       - name: Publish GitHub Release
@@ -928,7 +1078,7 @@ jobs:
             prerelease_flag="--prerelease"
           fi
 
-          mapfile -t release_assets < <(find dist -type f \( -name '*.apk' -o -name '*.sha256' -o -name '*.json' -o -name '*.md' \) | sort)
+          mapfile -t release_assets < <(find dist -type f \( -name '*.apk' -o -name '*.tar.gz' -o -name '*.sha256' -o -name '*.json' -o -name '*.md' \) | sort)
           if [[ ${#release_assets[@]} -eq 0 ]]; then
             echo "No release assets found under dist/." >&2
             exit 1
@@ -978,11 +1128,13 @@ jobs:
       - name: Emit release summary
         if: always()
         shell: bash
+        env:
+          CHECKOUT_REF: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
         run: |
           {
             echo "## prerelease-apk"
             echo
-            echo "- ref: \`${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}\`"
+            echo "- ref: \`${CHECKOUT_REF}\`"
             echo "- git head: \`${{ needs.build-prerelease-apk.outputs.head_sha }}\`"
             echo "- version: \`${{ needs.build-prerelease-apk.outputs.version_name }}\`"
             echo "- versionCode: \`${{ needs.build-prerelease-apk.outputs.version_code }}\`"
@@ -1018,10 +1170,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
-          ref: ${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
       - name: Build prerelease summary payload
         shell: bash
+        env:
+          CHECKOUT_REF: ${{ needs.build-prerelease-apk.outputs.head_sha || needs.route.outputs.checkout_ref || github.sha }}
         run: |
           set -euo pipefail
           mkdir -p dist/prerelease-summary
@@ -1031,7 +1186,7 @@ jobs:
             --run-attempt "${{ github.run_attempt }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --repository "${{ github.repository }}" \
-            --checkout-ref "${{ needs.route.outputs.checkout_ref != '' && needs.route.outputs.checkout_ref || github.ref_name }}" \
+            --checkout-ref="$CHECKOUT_REF" \
             --profile "prerelease" \
             --profile-intent "checkpoint" \
             --profile-notes "Packages installable artifacts and launch-smoke evidence for remote validation." \
@@ -1042,6 +1197,7 @@ jobs:
             --android-artifact-mode "${{ inputs.android_artifact_mode }}" \
             --emulator-boot-strategy "${{ inputs.emulator_boot_strategy }}" \
             --gradle-configuration-cache "${{ inputs.gradle_configuration_cache }}" \
+            --job route=${{ needs.route.result }} \
             --job build-prerelease-apk=${{ needs.build-prerelease-apk.result }} \
             --job isa-prerelease-proof=${{ needs.isa-prerelease-proof.result }} \
             --job publish-prerelease-apk=${{ needs.publish-prerelease-apk.result }} \

@@ -116,6 +116,7 @@ public:
     void SetTouchDensity(double density);
     void SetFlightCamera(int mode);
     void SetFlightTargetBodyId(const std::string& bodyId);
+    void SetFlightSafeArea(double halfWidth, double halfHeight);
     std::optional<CameraSnapshot> ResolveRuntimeHomeCamera() const;
     std::optional<CameraSnapshot> ResolveRuntimeBodyFrame(const std::string& bodyId) const;
     std::optional<CameraTransitionFrame> ResolveRuntimeCameraTransition(const std::string& bodyId) const;
@@ -207,6 +208,8 @@ private:
 
     int flightCameraMode_ = 0;
     std::string flightTargetBodyId_;
+    double flightSafeHalfWidth_ = 0.0;
+    double flightSafeHalfHeight_ = 0.0;
     bool flightFramePending_ = false;
     bool labMapMode_ = false;
     double labMapYawRadians_ = 0.0;

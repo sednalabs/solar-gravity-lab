@@ -133,6 +133,30 @@ class JniRuntimeBridgeTest {
 
     private fun List<RuntimeSignal>.lastPacket() = filterIsInstance<RuntimeSignal.RenderPacketReady>().last()
 
+    @Test fun invalidDockingCandidateCannotReplaceTheCurrentWorld() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
+            sessionHandles = ArrayDeque(listOf(42L, 84L)))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        transport.dockingTarget = null
+        assertTrue(runCatching { bridge.startDockingFlight(REFERENCE_SPACECRAFT_ID) }.isFailure)
+        assertTrue(bridge.isCurrentSession(42L))
+        assertEquals(listOf(84L), transport.destroyedHandles)
+    }
+
+    @Test fun dockingCandidateBindsItsNativeTargetIdentityAfterValidation() = runBlocking {
+        val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
+            sessionHandles = ArrayDeque(listOf(42L, 84L)))
+        val bridge = JniRuntimeBridge(transport, FakeRenderHostAdapter())
+        bridge.loadScenario(RuntimeScenarioPacks.default.scenarioId)
+        transport.dockingTarget = "saved.docking.target"
+        bridge.startDockingFlight(REFERENCE_SPACECRAFT_ID)
+        assertTrue(bridge.isCurrentSession(84L))
+        assertEquals(listOf(42L), transport.destroyedHandles)
+        assertEquals(listOf(84L to REFERENCE_SPACECRAFT_ID), transport.dockingStarts)
+        assertEquals("saved.docking.target", requireNotNull(bridge.dockingState(REFERENCE_SPACECRAFT_ID)).targetBodyId)
+    }
+
     @Test fun invalidRendezvousTargetCannotReplaceTheCurrentWorld() = runBlocking {
         val transport = FakeNativeRuntimeTransport(ArrayDeque(listOf(snapshotSummary(bodyCount = 3))),
             sessionHandles = ArrayDeque(listOf(42L, 84L)))
@@ -779,6 +803,8 @@ class JniRuntimeBridgeTest {
         var probeCommitError: Throwable? = null
         var lunarFlightError: Throwable? = null
         val lunarStarts = mutableListOf<Pair<Long, String>>()
+        val dockingStarts = mutableListOf<Pair<Long, String>>()
+        var dockingTarget: String? = "docking.station"
         val rendezvousStarts = mutableListOf<Pair<Long, String>>()
         var rendezvousTarget: String? = "rendezvous.station"
         val committedProbeCandidates = mutableListOf<RuntimeBodyState>()
@@ -787,6 +813,14 @@ class JniRuntimeBridgeTest {
         override fun startLunarFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) {
             lunarFlightError?.let { throw it }
             lunarStarts += handle to shipId
+        }
+        override fun startDockingFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) {
+            dockingStarts += handle to shipId
+        }
+        override fun dockingTargetId(handle: Long, shipId: String) = dockingTarget
+        override fun dockingState(handle: Long, shipId: String) = DoubleArray(25).apply {
+            this[0] = 1.0; this[4] = 1.0; this[7] = 22.44; this[12] = 22.44; this[20] = 8_000.0
+            this[21] = 30.0; this[22] = 0.05; this[23] = 0.15; this[24] = 0.1
         }
         override fun startRendezvousFlight(handle: Long, shipId: String, recordedAtUnixMs: Long) {
             rendezvousStarts += handle to shipId

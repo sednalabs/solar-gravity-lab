@@ -1,0 +1,21 @@
+[package]
+name = "solarlab-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+getrandom = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+solarlab-data = { path = "../../engine/data" }
+solarlab-domain = { path = "../../engine/domain" }
+solarlab-hardware = { path = "../../engine/hardware" }
+solarlab-history = { path = "../../engine/history" }
+solarlab-physics = { path = "../../engine/physics" }
+solarlab-runtime = { path = "../../engine/runtime" }
+
+[lints]
+workspace = true

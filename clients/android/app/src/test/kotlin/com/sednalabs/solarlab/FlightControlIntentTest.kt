@@ -44,6 +44,44 @@ class FlightControlIntentTest {
         assertNeutral(flightAxisIntent(pitched, false, 1, false))
     }
 
+    @Test fun attachmentPreventsEveryPropulsiveInputAndReleaseDoesNotInventMotion() {
+        assertNeutral(flightControlForAttachment(guidedDemand, true))
+        val released = flightControlForAttachment(FlightControl.Cut, false)
+        assertNeutral(released)
+        val back = flightAxisIntent(released, true, 5, true)
+        assertEquals(-1.0, back.translationZ, 0.0)
+        assertEquals(back, flightControlForAttachment(back, false))
+        assertNeutral(flightControlForAttachment(back, true))
+        assertNeutral(flightAxisIntent(back, true, 5, false))
+    }
+
+    @Test fun opposingHeldTouchesCancelAndReleaseRestoresRemainingDemand() {
+        val right = flightHeldAxisIntent(FlightControl.Cut, true, setOf(3), false)
+        assertEquals(1.0, right.translationX, 0.0)
+        val both = flightHeldAxisIntent(right, true, setOf(0, 3), false)
+        assertNeutral(both)
+        val leftRemains = flightHeldAxisIntent(both, true, setOf(0), false)
+        assertEquals(-1.0, leftRemains.translationX, 0.0)
+        assertNeutral(flightHeldAxisIntent(leftRemains, true, emptySet(), false))
+    }
+
+    @Test fun fineControlScalesEveryAxisAndModeChangesClearOldDemands() {
+        val fine = flightHeldAxisIntent(FlightControl(throttle = .35), true, setOf(3, 1, 2), true)
+        assertEquals(.2, fine.translationX, 0.0)
+        assertEquals(.2, fine.translationY, 0.0)
+        assertEquals(.2, fine.translationZ, 0.0)
+        assertEquals(.35, fine.throttle, 0.0)
+        val rotate = flightHeldAxisIntent(fine, false, setOf(0, 1, 2), true)
+        assertEquals(-.2, rotate.rotationX, 0.0)
+        assertEquals(-.2, rotate.rotationY, 0.0)
+        assertEquals(-.2, rotate.rotationZ, 0.0)
+        assertEquals(0.0, rotate.translationX, 0.0)
+        assertEquals(0.0, rotate.translationY, 0.0)
+        assertEquals(0.0, rotate.translationZ, 0.0)
+        assertEquals(FlightAssist.Manual, rotate.assist)
+        assertNeutral(flightHeldAxisIntent(rotate.copy(throttle = 0.0), false, emptySet(), true))
+    }
+
     private fun assertNeutral(control: FlightControl) {
         assertEquals(0.0, control.throttle, 0.0)
         assertEquals(0.0, control.translationX, 0.0)

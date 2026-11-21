@@ -305,6 +305,12 @@ Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetFlightTa
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetFlightSafeArea(
+    JNIEnv*, jobject, jlong handle, jdouble halfWidth, jdouble halfHeight) {
+    if (auto* controller = FromHandle(handle)) controller->SetFlightSafeArea(halfWidth, halfHeight);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_sednalabs_solarlab_render_vulkan_SolarLabVulkanBridge_nativeSetLabMapView(
     JNIEnv*, jclass, jlong handle, jboolean enabled, jdouble normalX, jdouble normalY, jdouble normalZ) {
     if (auto* controller = FromHandle(handle)) {

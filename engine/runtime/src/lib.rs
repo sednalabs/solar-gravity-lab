@@ -5,17 +5,30 @@
 //! services) should treat this crate as the single source of truth for world
 //! semantics.
 mod lab_prediction;
+pub mod authoring;
+pub use authoring::{AuthoringError, ScenarioDefinition, SpacecraftDefinition, SpacecraftDocument};
 mod spacecraft;
 mod flight_mission;
 mod flight_prediction;
 pub use flight_prediction::LunarCoastForecastDiagnostics;
 pub use flight_mission::{LunarMissionOutcome,LUNAR_FLYBY_SUCCESS_ALTITUDE_M,LUNAR_APPROACH_ALTITUDE_M,LUNAR_MISSION_DEADLINE_SECONDS,LunarMissionPhase,LunarMissionTelemetry,LUNAR_FLIGHT_BODY_ID,LUNAR_FLIGHT_MODEL,LUNAR_DEPARTURE_BURN_SECONDS,LUNAR_INSERTION_PHASE_RADIANS,LUNAR_INSERTION_ALTITUDE_M,LUNAR_EXPECTED_FLYBY_WINDOW_SECONDS};
 mod flight_telemetry;
+mod orbit_guidance;
+pub use orbit_guidance::{
+    OrbitGuidance, OrbitRegime, NEAR_CIRCULAR_ECCENTRICITY,
+    NEAR_PARABOLIC_ECCENTRICITY_MARGIN,
+};
+mod scientific_flight;
+pub use scientific_flight::{FlightBurnPreview, FlightBurnRequest};
+pub use solarlab_domain::science::ScientificSettings;
 mod rendezvous;
 pub use rendezvous::{RendezvousGuidance, RendezvousGuidanceMode, RendezvousScenario, RendezvousStatus, RendezvousTelemetry};
 mod rendezvous_flight;
 pub use rendezvous_flight::{RendezvousFlightTelemetry, RENDEZVOUS_STATION_BODY_ID};
-pub use flight_telemetry::FlightTelemetry;
+mod docking_flight;
+pub use docking_flight::{DockingFlightTelemetry, DOCKING_STATION_BODY_ID};
+pub use solarlab_domain::{DockingGuidanceMode, DockingStatus};
+pub use flight_telemetry::{FlightTelemetry, OrbitalElements};
 mod body_properties;
 mod lab_step;
 mod persistence;
@@ -38,8 +51,10 @@ pub use probe_authoring::{
 
 pub use scene_projection::extract_render_scene;
 
+#[cfg(test)]
+use orbit_archives::build_prediction_archives;
 use orbit_archives::{
-    build_orbit_archives, build_prediction_archives, next_epoch,
+    build_orbit_archives, next_epoch,
     push_trail_sample, record_trail_samples_from_bodies, render_scene_orbit_body_ids,
     representable_epoch_within, vec_magnitude,
 };
@@ -254,10 +269,15 @@ pub struct RuntimeTelemetryReport {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorldCommand {
+    /// Paused, branch-local numerical and gravitational model selection.
+    SetScientificSettings { settings: ScientificSettings },
     SpawnSpacecraft { body: BodyState, spacecraft: SpacecraftState },
     SetFlightControl { body_id: BodyId, control: FlightControl },
     StartGuidedBurn { body_id: BodyId, full_throttle_seconds: f64 },
     SetRendezvousGuidance { body_id: BodyId, mode: RendezvousGuidanceMode },
+    SetDockingGuidance { body_id: BodyId, mode: DockingGuidanceMode },
+    /// Release a fixed attachment without changing either body's momentum.
+    UndockSpacecraft { body_id: BodyId },
     /// Seeds the canonical startup solar-system catalog into an empty world.
     /// Runtime owns the catalog truth; host clients only request this action.
     SeedCanonicalSolarSystem,
@@ -330,6 +350,7 @@ pub enum RuntimeError {
     InvalidPlaybackRate(f64),
     InvalidBodyProperties,
     InvalidFlightState,
+    ScientificFailure(solarlab_physics::science::ScientificError),
     BodyEditRequiresPause,
     AdvanceBusy,
     AdvanceStale,
@@ -372,6 +393,8 @@ pub struct ApplyUpdateManifestResult {
 struct BranchWorldState {
     epoch_seconds: f64,
     bodies: Vec<BodyState>,
+    #[serde(default)]
+    scientific_settings: ScientificSettings,
     #[serde(default)]
     spacecraft: Vec<SpacecraftState>,
     observer: ObserverState,
@@ -423,6 +446,7 @@ pub struct AdvanceOperation {
     pub completed_steps: usize,
     pub total_steps: usize,
     plan: Option<FixedStepPlan>,
+    scientific_report: Option<solarlab_physics::science::ScientificStepReport>,
     bodies: Vec<MassiveBodyState>,
     spacecraft: Vec<solarlab_physics::spacecraft::SpacecraftBinding>,
 }

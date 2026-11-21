@@ -290,7 +290,11 @@ impl VulkanSceneAdapter {
 }
 
 fn stable_scene_revision(scene_revision: &str) -> &str {
-    scene_revision.split("|diag:").next().unwrap_or_default()
+    // Runtime appends diagnostics last; printable authored IDs can also contain
+    // the marker, and their content must remain part of the scene cache key.
+    scene_revision
+        .rsplit_once("|diag:")
+        .map_or(scene_revision, |(content, _)| content)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -688,6 +692,31 @@ mod tests {
         let second_packet = adapter.adapt(&scene);
 
         assert_eq!(first_packet, second_packet);
+    }
+
+    #[test]
+    fn adapter_preserves_authored_diagnostic_markers_in_cache_key() {
+        let mut adapter = VulkanSceneAdapter::default();
+        let mut scene = sample_scene();
+        scene.bodies[0].body_id = BodyId("probe|diag:first".into());
+        scene.scene_revision = "authored|body=probe|diag:first|diag:frame=0:cpu=0.1".into();
+        let first = adapter.adapt(&scene);
+
+        scene.scene_revision = "authored|body=probe|diag:first|diag:frame=0:cpu=7.0".into();
+        scene.diagnostics.cpu_extract_ms = 7.0;
+        let refreshed = adapter.adapt(&scene);
+        assert_eq!(first.body_instances, refreshed.body_instances);
+        assert_eq!(refreshed.diagnostics.cpu_extract_ms, 7.0);
+        assert_eq!(refreshed.scene_revision, scene.scene_revision);
+
+        scene.bodies[0].body_id = BodyId("probe|diag:second".into());
+        scene.scene_revision = "authored|body=probe|diag:second|diag:frame=0:cpu=7.0".into();
+        let changed = adapter.adapt(&scene);
+        assert_eq!(changed.body_instances[0].body_id, scene.bodies[0].body_id);
+        assert_ne!(
+            first.body_instances[0].body_id,
+            changed.body_instances[0].body_id
+        );
     }
 
     #[test]

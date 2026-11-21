@@ -1,0 +1,183 @@
+{
+  "format": "solarlab.scenario",
+  "version": 1,
+  "id": "authored.conic-flight-school",
+  "title": "Conic flight school: inclined orbits and lunar arrival",
+  "base": "earth-moon",
+  "spacecraft_definitions": [
+    {
+      "id": "selene-transfer-tug",
+      "display_name": "Selene transfer tug",
+      "visual_asset": "builtin:asteria",
+      "structure": {
+        "dry_mass_kg": 900,
+        "inertia_kg_m2": {
+          "x": 6000,
+          "y": 6000,
+          "z": 3000
+        },
+        "max_control_torque_nm": {
+          "x": 800,
+          "y": 800,
+          "z": 400
+        },
+        "radius_m": 8
+      },
+      "propellant": {
+        "capacity_kg": 600
+      },
+      "engines": [
+        {
+          "control": "main",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 4000,
+          "specific_impulse_seconds": 315
+        },
+        {
+          "control": "positive_x",
+          "direction_body": {
+            "x": 1,
+            "y": 0,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_x",
+          "direction_body": {
+            "x": -1,
+            "y": 0,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "positive_y",
+          "direction_body": {
+            "x": 0,
+            "y": 1,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_y",
+          "direction_body": {
+            "x": 0,
+            "y": -1,
+            "z": 0
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "positive_z",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        },
+        {
+          "control": "negative_z",
+          "direction_body": {
+            "x": 0,
+            "y": 0,
+            "z": -1
+          },
+          "position_body_m": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "max_thrust_n": 30,
+          "specific_impulse_seconds": 280
+        }
+      ]
+    }
+  ],
+  "spacecraft": [
+    {
+      "body_id": "school.earth-elliptic",
+      "definition_id": "selene-transfer-tug",
+      "placement": {
+        "kind": "conic_orbit",
+        "host_body_id": "earth",
+        "periapsis_altitude_m": 400000,
+        "eccentricity": 0.35,
+        "true_anomaly_rad": -1.2,
+        "inclination_rad": 0.6108652381980153,
+        "ascending_node_longitude_rad": 0.6981317007977318,
+        "argument_of_periapsis_rad": 1.1344640137963142
+      }
+    },
+    {
+      "body_id": "school.lunar-arrival",
+      "definition_id": "selene-transfer-tug",
+      "placement": {
+        "kind": "conic_orbit",
+        "host_body_id": "moon",
+        "periapsis_altitude_m": 150000,
+        "eccentricity": 1.4,
+        "true_anomaly_rad": -1.8,
+        "inclination_rad": 1.3089969389957472,
+        "ascending_node_longitude_rad": 2.007128639793479,
+        "argument_of_periapsis_rad": 0.5235987755982988
+      }
+    },
+    {
+      "body_id": "school.retrograde",
+      "definition_id": "selene-transfer-tug",
+      "placement": {
+        "kind": "conic_orbit",
+        "host_body_id": "earth",
+        "periapsis_altitude_m": 800000,
+        "eccentricity": 0.15,
+        "true_anomaly_rad": 1.0,
+        "inclination_rad": 2.530727415391778,
+        "ascending_node_longitude_rad": 4.014257279586958,
+        "argument_of_periapsis_rad": 0.3490658503988659
+      }
+    }
+  ],
+  "focus_body_id": "school.lunar-arrival"
+}

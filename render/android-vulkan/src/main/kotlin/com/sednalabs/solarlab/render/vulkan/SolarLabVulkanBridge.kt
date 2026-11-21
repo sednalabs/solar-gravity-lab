@@ -135,6 +135,10 @@ internal object SolarLabVulkanBridge {
         if (isLibraryLoaded && handle != 0L) nativeSetFlightTargetBodyId(handle, bodyId)
     }
 
+    fun setFlightSafeArea(handle: Long, halfWidth: Double, halfHeight: Double) {
+        if (isLibraryLoaded && handle != 0L) nativeSetFlightSafeArea(handle, halfWidth, halfHeight)
+    }
+
     fun cameraState(handle: Long): CameraState? {
         if (!isLibraryLoaded || handle == 0L) return null
         return nativeGetCameraState(handle)?.toCameraState()
@@ -475,6 +479,7 @@ internal object SolarLabVulkanBridge {
     private external fun nativeGetLabViewportState(handle: Long): Array<Any>?
     private external fun nativeSetFlightCamera(handle: Long, mode: Int)
     private external fun nativeSetFlightTargetBodyId(handle: Long, bodyId: String?)
+    private external fun nativeSetFlightSafeArea(handle: Long, halfWidth: Double, halfHeight: Double)
 
     private external fun nativeSetLabMapView(handle: Long, enabled: Boolean, normalX: Double, normalY: Double, normalZ: Double)
     private external fun nativeSetTouchDensity(handle: Long, density: Double)

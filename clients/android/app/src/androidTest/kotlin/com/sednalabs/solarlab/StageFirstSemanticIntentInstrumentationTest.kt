@@ -2,14 +2,17 @@ package com.sednalabs.solarlab
 
 import android.content.Intent
 import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.sednalabs.solarlab.runtime.SessionConnectionState
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -26,11 +29,23 @@ class StageFirstSemanticIntentInstrumentationTest {
         assumeTrue(BuildConfig.STAGE_FIRST_CLIENT && BuildConfig.DEBUG)
         SolarLabSemanticActionBridge.clearPendingReplay()
         val activity = composeRule.activity
+        val facade = activity.runtimeFacadeForTesting
         val originalIntent = activity.intent
         try {
+            // The title exists before the native catalogue and automatic Earth
+            // framing are ready. Finish that startup before taking over the
+            // Compose clock to test the two correlated feedback deadlines.
             composeRule.waitUntil(timeoutMillis = 20_000) {
-                composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
-                    .fetchSemanticsNodes().isNotEmpty()
+                val state = facade.uiState.value
+                activity.isStageFirstRuntimeMountedForTesting() &&
+                    state.connectionState == SessionConnectionState.Active &&
+                    state.renderFrame?.bodies?.any { it.bodyId == "earth" } == true &&
+                    state.focusedBodyId == "earth" && state.pendingActionLabel == null &&
+                    runCatching {
+                        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                            .assertIsDisplayed().assertTextContains("Earth")
+                        composeRule.onNodeWithTag(LabTags.PLAY_PAUSE).assertIsEnabled()
+                    }.isSuccess
             }
             composeRule.mainClock.autoAdvance = false
 
@@ -44,15 +59,36 @@ class StageFirstSemanticIntentInstrumentationTest {
                 composeRule.runOnUiThread { activity.startActivity(intent) }
                 val expected = "Earth. SolarLab semantic focus acknowledged; " +
                     "request-id=$requestId; query=earth; resolved-body=earth"
-                composeRule.waitUntil(timeoutMillis = 20_000) {
-                    composeRule.mainClock.advanceTimeByFrame()
-                    runCatching {
-                        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
-                            .assertTextContains("Earth")
-                            .assertContentDescriptionEquals(expected)
-                        composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FRAME_REQUEST)
-                            .assertIsDisplayed().assertTextContains("Frame requested · Earth")
-                    }.isSuccess
+                var lastObservationFailure: AssertionError? = null
+                try {
+                    composeRule.waitUntil(timeoutMillis = 20_000) {
+                        composeRule.mainClock.advanceTimeByFrame()
+                        try {
+                            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                                .assertTextContains("Earth")
+                                .assertContentDescriptionEquals(expected)
+                            composeRule.onNodeWithTag(SolarLabTestTags.STAGE_FIRST_SEARCH_FRAME_REQUEST)
+                                .assertIsDisplayed().assertTextContains("Frame requested · Earth")
+                            true
+                        } catch (error: AssertionError) {
+                            lastObservationFailure = error
+                            false
+                        }
+                    }
+                } catch (error: ComposeTimeoutException) {
+                    var deliveredRequest: String? = null
+                    composeRule.runOnUiThread {
+                        deliveredRequest = activity.intent.getStringExtra(SolarLabSemanticActionBridge.EXTRA_REQUEST_ID)
+                    }
+                    val selection = runCatching {
+                        composeRule.onAllNodesWithTag(SolarLabTestTags.STAGE_FIRST_SELECTION_TITLE)
+                            .fetchSemanticsNodes().joinToString { it.config.toString() }.take(2_000)
+                    }.getOrElse { it.toString() }
+                    val state = facade.uiState.value
+                    throw AssertionError("Focus request $requestId was not acknowledged; delivered=$deliveredRequest, " +
+                        "replay=${SolarLabSemanticActionBridge.commands.replayCache}, selected=${state.focusedBodyId}, " +
+                        "connection=${state.connectionState}, pending=${state.pendingActionLabel}, " +
+                        "selection=$selection, last assertion=${lastObservationFailure?.message}", error)
                 }
             }
 

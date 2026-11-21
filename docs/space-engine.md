@@ -1,10 +1,13 @@
 # Spaceflight foundation
 
-Programme w18994, streams w18995–w18999, separate from scientific fidelity and
-Earth–Moon laboratory. Baseline main `20c1ae79d15889fbf02e6fd376335eeed1810003`.
-Integration branch `feature/spaceflight-foundation-20261118`. Hardware PR249 is
-independent. Main is newer than published alpha.2; source, hosted tests, APK and
-physical S25 acceptance are separate claims.
+Programme w18994, streams w18995–w18999 and docking extension w19001, separate
+from scientific fidelity and the Earth–Moon laboratory. A–E are merged at main
+`dac95def8a6dda19736f1f41f3261fb19afc082d`; exact-source hosted proof is
+[Validation Lab 44348359492](https://github.com/sednalabs/solar-gravity-lab/actions/runs/44348359492).
+Docking extends that baseline on `feature/docking-flight-20261119`. Hardware
+PR249 and follow-up w19000 retain independent ownership. Source, hosted tests,
+installable debug artifacts, tagged releases and physical S25 acceptance are
+separate claims.
 
 | Authority | Existing foundation | Flight extension |
 | --- | --- | --- |
@@ -25,7 +28,9 @@ Rotation includes the gyroscopic term.
 The configurable reference ship has 4,000 kg dry mass, 8,000 kg fuel, 90 kN main
 thrust at 450 s specific impulse, 800 N RCS axes at 300 s, fixed principal inertia
 and ideal bounded reaction wheels. Wheel saturation/power, fuel slosh, drag,
-relativity, resolved collisions and structural dynamics are not simulated.
+relativity and structural dynamics are not simulated. Local rigid contact is
+explicitly opted in by the separate docking scenario; ordinary orbital flight
+and the laboratory do not gain universal collision response.
 Launch authors an approximate 400 km circular ICRF-XY orbit around current Earth;
 this is not a JPL spacecraft vector. Powered input caps warp to 1x; fine attitude
 steps can limit achieved coasting speed. Rust instrumentation is osculating
@@ -41,12 +46,14 @@ store; [bevy_ecs](https://docs.rs/bevy_ecs/latest/bevy_ecs/) adds systems/resour
 and parallel scheduling. Neither warrants replacing the current authority.
 Reconsider internal storage when measured gameplay populations justify it.
 
-[Rapier](https://rapier.rs/docs/user_guides/rust/rigid_bodies/) is the candidate
-for contacts, joints, spatial queries and CCD. This slice has no contact solver
-or docking. Moving-frame transforms subtract origins in f64 and include angular
-velocity transport. A future contact island must own each bounded local step,
-apply gravity once and publish changes atomically to the existing world. Never
-integrate independent Rapier and celestial positions for one entity.
+[Station docking](station-docking.md) implements the first local contact path
+using Rapier f64. Opted-in zero-source-mass bodies retain meaningful inertial
+mass. Rapier owns their bounded local drift between authoritative gravity
+half-kicks and publishes through the existing atomic advance. Moving frames
+subtract astronomical origins in f64; port observations include angular
+transport. There are no independent mutable Rapier and celestial pose stores.
+Authored hulls, CCD and an actual-pose fixed attachment serve the nearby reference
+pair; general spatial queries and widely separated contact islands remain open.
 
 ## Reproduction
 
@@ -56,14 +63,16 @@ cargo run -p solarlab-runtime --example orbital_flight
 cargo run --release -p solarlab-runtime --example lunar_flight -- 60
 cargo run --release -p solarlab-runtime --example orbital_rendezvous
 cargo run --release -p solarlab-runtime --example orbital_rendezvous -- match
+cargo run -p solarlab-runtime --example station_docking
 cargo check -p solarlab-ffi --target aarch64-linux-android
 python3 tools/test_import_spacecraft_gltf.py
 ```
 
 Flight saves use format version2. Mission/burn saves declare flight_model
 `six-dof-strang-rocket-v2`; persistent rendezvous or station appearance declares
-`six-dof-strang-rocket-rendezvous-v3`. Ordinary lab saves retain v1. The reader
-retains both earlier flight models, while older clients reject unsupported
+`six-dof-strang-rocket-rendezvous-v3`; docking components, including checkpoints,
+declare `six-dof-strang-rocket-docking-v4`. Ordinary lab saves retain v1. The reader
+retains earlier flight models, while older clients reject unsupported
 programmes instead of silently discarding their controls. Scene ABI13/body stride296
 transports mesh facts and precise offsets.
 The original glTF asset includes documented provenance under
@@ -100,4 +109,17 @@ passive station and an RCS chaser, including persistent approach and velocity
 matching inside native integration. It has executable examples and analytical,
 convergence and persistence tests. Android station interaction consumes these
 same commands and observations; visual and interaction acceptance require its
-exact-source hosted journey evidence. Contact response and docking are not modelled.
+exact-source hosted journey evidence. That scenario retains its contact-free
+75 m stand-off objective. The separate [30 m docking mission](station-docking.md)
+adds force-driven approach, safe physical collar contact, a retained fixed
+attachment, and release followed by manual RCS departure.
+
+## External spacecraft and scenario authoring
+
+The [spacecraft authoring guide](spacecraft-authoring.md) describes versioned JSON
+construction, atomic imports, composable contact geometry, independent local
+interaction islands, the generated visual-asset catalog and the native
+`authoring_lab` example. The checked-in workshop, lunar depot and Pathfinder
+examples construct different vehicles/scenarios without application-internal
+spawn functions. Existing saves preserve their authoritative components and
+validated visual bindings.

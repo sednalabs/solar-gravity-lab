@@ -1,9 +1,61 @@
 //! Bounded flight requests. Runtime owns forces and state transitions.
 use super::*;
 use solarlab_domain::{AttitudeMode, FlightControl, RendezvousGuidanceMode, RendezvousStatus};
-pub(super) const FLIGHT_SAMPLE_LEN: usize = 44;
+pub(super) const FLIGHT_SAMPLE_LEN: usize = 48;
 pub(super) const LUNAR_SAMPLE_LEN: usize = 21;
 pub(super) const RENDEZVOUS_SAMPLE_LEN: usize = 27;
+
+fn planning_error(error: RuntimeError) -> String {
+    match error {
+        RuntimeError::ScientificFailure(reason) => reason.to_string(),
+        RuntimeError::BodyEditRequiresPause => "pause the simulation first".into(),
+        RuntimeError::AdvanceBusy => "finish or cancel the current advance first".into(),
+        RuntimeError::AdvanceWorkLimit => "shorten this preview to fit its calculation budget".into(),
+        other => format!("{other:?}"),
+    }
+}
+
+pub(super) fn dynamics(handle: SlRuntimeHandle) -> Result<[f64; 3], String> {
+    use solarlab_domain::science::IntegratorKind;
+    let registry = registry().lock().map_err(|_| "Runtime lock is unavailable")?;
+    let settings = registry.get(handle).ok_or("The experiment is no longer open")?.runtime.scientific_settings();
+    let method = match settings.integrator {
+        IntegratorKind::LeapfrogKickDriftKick => 0.0,
+        IntegratorKind::YoshidaFourthOrder => 1.0,
+        IntegratorKind::DormandPrince54 => 2.0,
+        _ => return Err("Unsupported scientific method".into()),
+    };
+    Ok([1.0, method, settings.harmonics.len() as f64])
+}
+
+pub(super) fn set_dynamics(handle: SlRuntimeHandle, method: i32, recorded: i64) -> Result<(), String> {
+    use solarlab_domain::science::IntegratorKind;
+    let integrator = match method {
+        0 => IntegratorKind::LeapfrogKickDriftKick,
+        1 => IntegratorKind::YoshidaFourthOrder,
+        2 => IntegratorKind::DormandPrince54,
+        _ => return Err("Unsupported scientific method".into()),
+    };
+    let mut registry = registry().lock().map_err(|_| "Runtime lock is unavailable")?;
+    let runtime = &mut registry.get_mut(handle).ok_or("The experiment is no longer open")?.runtime;
+    let mut settings = runtime.scientific_settings().clone();
+    settings.integrator = integrator;
+    runtime.apply_command(WorldCommand::SetScientificSettings { settings }, recorded)
+        .map_err(|e| format!("Could not change flight dynamics: {}", planning_error(e)))?;
+    Ok(())
+}
+
+pub(super) fn preview_burn(handle: SlRuntimeHandle, ship_id: &str, duration: f64, throttle: f64, assist: i32) -> Result<Vec<u8>, String> {
+    let control = control_from_values(&[throttle, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, f64::from(assist)])?;
+    let runtime = {
+        let registry = registry().lock().map_err(|_| "Runtime lock is unavailable")?;
+        registry.get(handle).ok_or("The experiment is no longer open")?.runtime.clone()
+    };
+    let preview = runtime.preview_flight_burn(ship_id, solarlab_runtime::FlightBurnRequest {
+        duration_seconds: duration, throttle, attitude_mode: control.attitude_mode,
+    }).map_err(|e| format!("Could not preview the burn: {}", planning_error(e)))?;
+    serde_json::to_vec(&preview).map_err(|_| "Could not encode burn preview".into())
+}
 
 pub(super) fn control_from_values(v: &[f64]) -> Result<FlightControl, String> {
     if v.len() != 8 || v.iter().any(|x| !x.is_finite()) {
@@ -19,6 +71,8 @@ pub(super) fn control_from_values(v: &[f64]) -> Result<FlightControl, String> {
         3.0 => AttitudeMode::Retrograde,
         4.0 => AttitudeMode::Normal,
         5.0 => AttitudeMode::AntiNormal,
+        6.0 => AttitudeMode::RadialOut,
+        7.0 => AttitudeMode::RadialIn,
         _ => return Err("Unknown attitude assist".into()),
     };
     Ok(FlightControl {
@@ -62,7 +116,7 @@ pub(super) fn start(handle: SlRuntimeHandle, ship_id: &str, recorded: i64) -> Re
     Ok(())
 }
 
-fn configure_flight(staged: &mut WorldRuntime, ship_id: &str, recorded: i64) -> Result<(), String> {
+pub(super) fn configure_flight(staged: &mut WorldRuntime, ship_id: &str, recorded: i64) -> Result<(), String> {
     for command in [
         WorldCommand::PausePlayback,
         WorldCommand::SetPlaybackRate {
@@ -319,6 +373,8 @@ pub(super) fn sample(
         AttitudeMode::Retrograde => 3.0,
         AttitudeMode::Normal => 4.0,
         AttitudeMode::AntiNormal => 5.0,
+        AttitudeMode::RadialOut => 6.0,
+        AttitudeMode::RadialIn => 7.0,
     };
     let firing = if ship.propellant_mass_kg > 0.0 {
         ship.control.throttle
@@ -330,8 +386,17 @@ pub(super) fn sample(
     } else {
         0.0
     };
+    // Version 2 extends the version 1 prefix with native navigation. Missing
+    // times use -1, never a fabricated zero-second arrival or an infinity.
+    let guidance = t.guidance.as_ref();
+    let regime = guidance.map_or(0.0, |g| match g.regime {
+        solarlab_runtime::OrbitRegime::Elliptic => 1.0,
+        solarlab_runtime::OrbitRegime::NearCircular => 2.0,
+        solarlab_runtime::OrbitRegime::Hyperbolic => 3.0,
+        solarlab_runtime::OrbitRegime::NearParabolic => 4.0,
+    });
     let result = [
-        1.0,
+        2.0,
         t.epoch_seconds,
         t.revision as f64,
         ship.dry_mass_kg,
@@ -388,6 +453,10 @@ pub(super) fn sample(
         ship.control.rotation_body.y,
         ship.control.rotation_body.z,
         t.main_engine_max_thrust_n * firing / ship.mass_kg(),
+        regime,
+        guidance.and_then(|g| g.time_to_periapsis_seconds).unwrap_or(-1.0),
+        guidance.and_then(|g| g.time_to_apoapsis_seconds).unwrap_or(-1.0),
+        guidance.map_or(-1.0, |g| g.circularisation_delta_v_mps),
     ];
     if result.iter().any(|x| !x.is_finite()) {
         return Err("Non-finite flight telemetry".into());
@@ -464,6 +533,40 @@ pub(super) fn lunar_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn planning_transport_preserves_world_and_roundtrips_radial_assist() {
+        let created = sl_v2_session_create(super::super::tests::new_params("lab.earth-moon", "planning"));
+        let handle = created.handle;
+        registry().lock().unwrap().get_mut(handle).unwrap().runtime
+            .apply_command(WorldCommand::SeedCanonicalSolarSystem, 0).unwrap();
+        start(handle, "pilot", 1).unwrap();
+        set_dynamics(handle, 1, 2).unwrap();
+        assert_eq!(dynamics(handle).unwrap(), [1.0, 1.0, 0.0]);
+        let before = super::super::persistence::export_save(handle).unwrap();
+        let wire = sample(handle, "pilot").unwrap().unwrap();
+        assert_eq!(wire[0], 2.0);
+        assert_eq!(wire.len(), 48);
+        assert_eq!(wire[44], 2.0, "The initial circular orbit has no privileged apsides");
+        assert_eq!(&wire[45..47], &[-1.0, -1.0]);
+        assert!(wire[47] < 1e-7, "The initial circularisation impulse is negligible");
+        let bytes = preview_burn(handle, "pilot", 3.0, 0.25, 6).unwrap();
+        let preview: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(preview["fuelUsedKg"].as_f64().unwrap() > 0.0);
+        assert_eq!(preview["elapsedSeconds"], 3.0);
+        assert_eq!(preview["referenceRadiusM"].as_f64(), Some(wire[34]));
+        assert_eq!(preview["beforeGuidance"]["regime"], "nearCircular");
+        assert!(preview["beforeGuidance"]["timeToApoapsisSeconds"].is_null());
+        assert!(preview["beforeGuidance"]["timeToPeriapsisSeconds"].is_null());
+        assert_eq!(preview["beforeGuidance"]["circularisationDeltaVMps"].as_f64(), Some(wire[47]));
+        assert!(preview["afterGuidance"]["circularisationDeltaVMps"].as_f64().unwrap() >= 0.0);
+        assert_eq!(super::super::persistence::export_save(handle).unwrap(), before);
+        assert!(set_dynamics(handle, 99, 3).is_err());
+        assert_eq!(super::super::persistence::export_save(handle).unwrap(), before);
+        set_control(handle, "pilot", &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 6.0], 4).unwrap();
+        assert_eq!(sample(handle, "pilot").unwrap().unwrap()[24], 6.0);
+        assert_eq!(sl_v2_session_destroy(handle).code, SlStatusCode::Ok);
+    }
+
 
     #[test]
     fn bounded_rendezvous_commit_publishes_current_mesh_poses_through_cached_scene_ffi() {
@@ -881,6 +984,7 @@ mod tests {
         }
         let state = sample(handle, "flight.odyssey").unwrap().unwrap();
         assert_eq!(state[35], 0.0);
+        assert_eq!(&state[44..48], &[0.0, -1.0, -1.0, -1.0]);
         assert!((state[10] - 123.0).abs() < 1e-9);
         assert!((state[11] - 123.0).abs() < 1e-9);
         sl_v2_session_destroy(handle);
@@ -946,6 +1050,7 @@ mod tests {
         let restored_values = sample(restored.handle, "flight.odyssey").unwrap().unwrap();
         for index in [
             1, 3, 4, 5, 8, 9, 10, 17, 18, 19, 20, 21, 22, 23, 28, 29, 30, 31, 32, 33,
+            44, 45, 46, 47,
         ] {
             assert_eq!(after[index], restored_values[index], "flight field {index}");
         }

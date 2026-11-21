@@ -1,10 +1,13 @@
 pub mod spacecraft;
 pub mod rendezvous;
+pub mod docking;
+pub mod science;
 use std::collections::BTreeSet;
 use std::fs;
 use std::sync::OnceLock;
 
 use solarlab_domain::Vector3d;
+pub use solarlab_domain::science::IntegratorKind;
 
 #[cfg(any(target_arch = "aarch64", test))]
 mod pair_work;
@@ -21,12 +24,6 @@ pub enum SolverBackend {
     ReferenceScalar,
     SimdArm64,
     SimdX64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum IntegratorKind {
-    LeapfrogKickDriftKick,
-    AdaptiveSymplectic,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +72,12 @@ pub struct MassiveBodyState {
 pub struct SolverExecutionReport {
     pub requested_backend: SolverBackend,
     pub effective_backend: SolverBackend,
+    pub requested_integrator: IntegratorKind,
+    pub effective_integrator: IntegratorKind,
+    pub nonconservative_split: bool,
+    /// Legacy nonfallible entry points leave the state unchanged on rejection.
+    /// Checked scientific APIs return the error directly instead.
+    pub integration_error: Option<String>,
     pub path_id: String,
     pub fallback_code: SolverFallbackCode,
     pub fallback_reason: Option<String>,
@@ -121,6 +124,10 @@ impl SolverExecutionReport {
         Self {
             requested_backend: SolverBackend::ReferenceScalar,
             effective_backend: SolverBackend::ReferenceScalar,
+            requested_integrator: IntegratorKind::LeapfrogKickDriftKick,
+            effective_integrator: IntegratorKind::LeapfrogKickDriftKick,
+            nonconservative_split: false,
+            integration_error: None,
             path_id: "scalar.reference".to_owned(),
             fallback_code: SolverFallbackCode::None,
             fallback_reason: None,
@@ -716,6 +723,7 @@ pub struct FixedStepPlan {
     decision: DispatchDecision,
     report: SolverExecutionReport,
     body_count: usize,
+    science: science::ScientificPlan,
 }
 
 pub const MAX_INCREMENTAL_STEPS: usize = 64;
@@ -738,6 +746,9 @@ pub fn fixed_step_plan_with_source_count(
     source_count: usize,
     features: &[String],
 ) -> Option<FixedStepPlan> {
+    if !policy.integrator.implemented() {
+        return None;
+    }
     let total_steps = checked_substep_count(policy, delta_seconds)?;
     let normalized = normalize_cpu_features(features);
     let decision = dispatch_solver_backend_with_source_count(
@@ -758,6 +769,7 @@ pub fn fixed_step_plan_with_source_count(
         decision,
         report,
         body_count,
+        science: science::ScientificPlan::for_integrator(policy.integrator),
     })
 }
 
@@ -781,22 +793,32 @@ pub fn advance_fixed_steps(
     } else {
         GravityKernel::Scalar
     };
-    integrate_fixed_steps_with_kernel(bodies, plan.dt_seconds, count, kernel);
-    Ok(())
+    science::advance_selected_steps(plan, bodies, count, kernel).map(|_| ()).map_err(|_| ())
 }
 
 impl FixedStepPlan {
     #[must_use]
     pub fn report(&self) -> SolverExecutionReport {
-        self.report.clone()
+        let mut report = self.report.clone();
+        report.requested_integrator = self.science.settings.integrator;
+        report.effective_integrator = self.science.effective_integrator;
+        report.nonconservative_split = self.science.nonconservative_split;
+        report
     }
 }
 
+/// Compatibility API. Invalid requests and rejected scientific steps leave the
+/// input unchanged. New numerical-method callers should use
+/// `science::advance_authoritative_scientific` to receive the rejection reason.
 pub fn advance_authoritative_scalar(
     policy: &PhysicsPolicy,
     bodies: &mut [MassiveBodyState],
     delta_seconds: f64,
 ) -> PhysicsInvariants {
+    if policy.integrator != IntegratorKind::LeapfrogKickDriftKick {
+        let _ = science::advance_legacy_method(policy, bodies, delta_seconds, GravityKernel::Scalar);
+        return compute_invariants(bodies);
+    }
     if bodies.is_empty() {
         return compute_invariants(bodies);
     }
@@ -839,7 +861,19 @@ pub fn advance_authoritative_with_features(
         decision.effective_backend == SolverBackend::SimdArm64,
         decision.arm64_gravity_kernel,
     );
-    let invariants = match decision.effective_backend {
+    let mut integration_error = None;
+    let invariants = if policy.integrator != IntegratorKind::LeapfrogKickDriftKick {
+        let kernel = match decision.effective_backend {
+            SolverBackend::ReferenceScalar => GravityKernel::Scalar,
+            SolverBackend::SimdArm64 => GravityKernel::Arm64(decision.arm64_gravity_kernel
+                .unwrap_or(Arm64GravityKernel::PortableScalarOracle)),
+            SolverBackend::SimdX64 => GravityKernel::X64Avx2,
+        };
+        if let Err(error) = science::advance_legacy_method(policy, bodies, delta_seconds, kernel) {
+            integration_error = Some(error.to_string());
+        }
+        compute_invariants(bodies)
+    } else { match decision.effective_backend {
         SolverBackend::ReferenceScalar => {
             advance_authoritative_scalar(policy, bodies, delta_seconds)
         }
@@ -852,13 +886,17 @@ pub fn advance_authoritative_with_features(
                 .unwrap_or(Arm64GravityKernel::PortableScalarOracle),
         ),
         SolverBackend::SimdX64 => advance_authoritative_x64(policy, bodies, delta_seconds),
-    };
+    }};
 
     (
         invariants,
         SolverExecutionReport {
             requested_backend: policy.solver_backend.clone(),
             effective_backend: decision.effective_backend,
+            requested_integrator: policy.integrator,
+            effective_integrator: policy.integrator,
+            nonconservative_split: false,
+            integration_error,
             path_id: decision.path_id,
             fallback_code: decision.fallback_code,
             fallback_reason: decision.fallback_reason,
@@ -908,6 +946,10 @@ pub fn solver_execution_report_for_backend_with_source_count(
     SolverExecutionReport {
         requested_backend: requested_backend.clone(),
         effective_backend: decision.effective_backend,
+        requested_integrator: IntegratorKind::LeapfrogKickDriftKick,
+        effective_integrator: IntegratorKind::LeapfrogKickDriftKick,
+        nonconservative_split: false,
+        integration_error: None,
         path_id: decision.path_id,
         fallback_code: decision.fallback_code,
         fallback_reason: decision.fallback_reason,
@@ -1369,6 +1411,11 @@ fn advance_authoritative_arm64(
     delta_seconds: f64,
     gravity_kernel: Arm64GravityKernel,
 ) -> PhysicsInvariants {
+    if policy.integrator != IntegratorKind::LeapfrogKickDriftKick {
+        let _ = science::advance_legacy_method(policy, bodies, delta_seconds,
+            GravityKernel::Arm64(gravity_kernel));
+        return compute_invariants(bodies);
+    }
     if bodies.is_empty() {
         return compute_invariants(bodies);
     }
@@ -1387,6 +1434,10 @@ fn advance_authoritative_x64(
     bodies: &mut [MassiveBodyState],
     delta_seconds: f64,
 ) -> PhysicsInvariants {
+    if policy.integrator != IntegratorKind::LeapfrogKickDriftKick {
+        let _ = science::advance_legacy_method(policy, bodies, delta_seconds, GravityKernel::X64Avx2);
+        return compute_invariants(bodies);
+    }
     let Some(count) = checked_substep_count(policy, delta_seconds) else {
         return compute_invariants(bodies);
     };
