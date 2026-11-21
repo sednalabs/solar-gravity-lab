@@ -150,6 +150,25 @@ class ValidationLabPlanTests(unittest.TestCase):
             ],
         )
 
+    def test_android_instrumentation_source_change_qualifies_both_host_modes(self) -> None:
+        outputs = run_plan([
+            "clients/android/app/src/androidTest/kotlin/com/sednalabs/solarlab/FocusedCompositionInstrumentationTest.kt"
+        ])
+        self.assertEqual(outputs["profile"], "targeted")
+        self.assertEqual(outputs["android_shell"], "true")
+        self.assertEqual(
+            [row["validation_mode"] for row in json.loads(outputs["android_shell_matrix"])],
+            ["shell-v2", "stage-first-runtime"],
+        )
+
+        # A normal UI implementation change still uses the focused stage-first
+        # lane, without paying for both modes on every Android PR.
+        regular = run_plan(["clients/android/app/src/main/kotlin/com/sednalabs/solarlab/FlightMode.kt"])
+        self.assertEqual(
+            [row["validation_mode"] for row in json.loads(regular["android_shell_matrix"])],
+            ["stage-first-runtime"],
+        )
+
     def test_desktop_change_qualifies_native_host_and_browser_without_android(self) -> None:
         for path in ("clients/desktop/src/flight.rs", "clients/desktop/web/flight.js"):
             with self.subTest(path=path):

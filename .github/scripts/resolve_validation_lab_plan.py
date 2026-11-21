@@ -492,10 +492,24 @@ def main() -> None:
         route_reason = "same-PR prior evidence was reused and the latest delta has no validation-lab-owned runtime lanes"
 
     profile_intent = "checkpoint" if profile in {"broad", "full"} else profile
+
+    # Android instrumentation tests can exercise either the legacy shell-v2 or
+    # stage-first runtime. Targeted PR routing normally chooses only stage-first;
+    # when test source changes, qualify both hosts before accepting the PR.
+    # Preserve all other lane decisions and explicit validation-mode overrides.
+    instrumentation_test_changed = (
+        effective_files is not None
+        and any(path.startswith("clients/android/app/src/androidTest/") for path in effective_files)
+    )
+    android_matrix_profile = (
+        "frontier"
+        if profile == "targeted" and android_validation_mode == "auto" and instrumentation_test_changed
+        else profile
+    )
     android_shell_matrix = resolve_android_shell_matrix(
         lanes["android_shell"],
         android_validation_mode,
-        profile,
+        android_matrix_profile,
         gradle_configuration_cache,
     )
     lane_summary = (
